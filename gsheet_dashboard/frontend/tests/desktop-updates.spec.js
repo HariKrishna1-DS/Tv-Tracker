@@ -64,3 +64,45 @@ test('active sync disables the restart action',async({page})=>{
   await expect(page.getByRole('button',{name:'Install & open 2.3.0',exact:true})).toBeDisabled();
   expect(await page.evaluate(()=>window.updateCalls)).toEqual(['check','download']);
 });
+
+test('turning on Sheet Sync opens optional Google Sheets setup for a new workspace',async({page})=>{
+  await setup(page);
+  await page.getByRole('button',{name:'Close dialog',exact:true}).click();
+  const sheetSync=page.getByRole('switch',{name:'Sheet_sync Off',exact:true});
+  await sheetSync.click();
+  const dialog=page.getByRole('dialog',{name:'Connections & settings'});
+  await expect(dialog.getByText('Optional for local use')).toBeVisible();
+  await expect(dialog.getByText('Set up Google Sheets to turn on Sheet Sync.',{exact:false})).toBeVisible();
+  await expect(dialog.getByLabel('Spreadsheet URL or ID')).toBeVisible();
+  await expect(dialog.getByRole('button',{name:'Upload JSON key'})).toBeVisible();
+  await expect(dialog.getByRole('button',{name:'Save settings'})).toBeEnabled();
+  await dialog.getByRole('button',{name:'Close dialog'}).click();
+  await expect(sheetSync).toHaveAttribute('aria-checked','false');
+});
+
+test('service-account removal can be undone and is sent only when settings are saved',async({page})=>{
+  await setup(page);
+  await page.getByRole('button',{name:'Close dialog',exact:true}).click();
+  await page.evaluate(()=>{
+    const original=window.desktop.getSettings;
+    window.desktop.getSettings=async()=>({...await original(),
+      spreadsheetId:'a'.repeat(30),googleConfigured:true,serviceAccountEmail:'fixture@example.iam.gserviceaccount.com'});
+    window.desktop.saveSettings=async value=>{window.updateCalls.push(value.clearServiceAccount===true);};
+  });
+  const settings=page.getByRole('button',{name:'Settings',exact:true});
+  await settings.click();
+  const dialog=page.getByRole('dialog',{name:'Connections & settings'});
+  await dialog.getByRole('button',{name:'Remove key',exact:true}).click();
+  await expect(dialog.getByText('Key will be removed when you save.',{exact:false})).toBeVisible();
+  await expect(dialog.getByRole('button',{name:'Test saved Google Sheets connection'})).toBeDisabled();
+  await dialog.getByRole('button',{name:'Undo removal'}).click();
+  await expect(dialog.getByRole('button',{name:'Test saved Google Sheets connection'})).toBeEnabled();
+  await dialog.getByRole('button',{name:'Remove key',exact:true}).click();
+  await dialog.getByRole('button',{name:'Cancel',exact:true}).click();
+  expect(await page.evaluate(()=>window.updateCalls)).toEqual([]);
+  await settings.click();
+  await expect(dialog.getByRole('button',{name:'Replace key'})).toBeVisible();
+  await dialog.getByRole('button',{name:'Remove key',exact:true}).click();
+  await dialog.getByRole('button',{name:'Save settings'}).click();
+  await expect.poll(()=>page.evaluate(()=>window.updateCalls)).toEqual([true]);
+});

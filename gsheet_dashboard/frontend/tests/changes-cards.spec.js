@@ -44,7 +44,7 @@ test('each Changes card focuses its matching order table with daily-style contro
     await expect(section.getByRole('heading',{name:`${name} · ${rows.length}`,exact:true})).toBeInViewport();
     await expect(section.locator('tbody tr')).toHaveCount(Math.min(rows.length,50));
     for(const row of rows.slice(0,50))await expect(section.getByRole('cell',{name:row['Order Number'],exact:true})).toBeVisible();
-    await expect(section.getByRole('button',{name:'Filtered CSV',exact:true})).toBeEnabled();
+    await expect(section.getByRole('button',{name:'Filtered Excel',exact:true})).toBeEnabled();
     if(key==='matched'){
       await section.getByRole('button',{name:'Next page',exact:true}).click();
       await expect(section.locator('tbody tr')).toHaveCount(11);

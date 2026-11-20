@@ -79,8 +79,8 @@ def current(config):
     value = {field: os.environ.get(variable, '') for field, variable in ENVIRONMENT.items()}
     value.update(spreadsheetId=config.SPREADSHEET_ID, fullTrackerTitle=config.FULL_TRACKER_TITLE,
                  remainingTrackerTitle=config.REMAINING_TRACKER_TITLE, queueUrl=config.QUEUE_URL)
-    raw = value['serviceAccount'] or 'service_account.json'
-    if not raw.lstrip().startswith('{'):
+    raw = os.environ.get(ENVIRONMENT['serviceAccount'], 'service_account.json').strip()
+    if raw and not raw.startswith('{'):
         path = Path(raw)
         try:
             raw = (path if path.is_absolute() else config.BASE_DIR / path).read_text(encoding='utf-8-sig')
@@ -119,7 +119,7 @@ def validate(payload, previous):
     match = re.fullmatch(r'https://docs\.google\.com/spreadsheets/d/([\w-]+)(?:[/?#].*)?', settings['spreadsheetId'])
     if match:
         settings['spreadsheetId'] = match[1]
-    if not re.fullmatch(r'[a-zA-Z0-9_-]{20,150}', settings['spreadsheetId']):
+    if settings['spreadsheetId'] and not re.fullmatch(r'[a-zA-Z0-9_-]{20,150}', settings['spreadsheetId']):
         raise ValueError('Enter a valid Google Sheets URL or spreadsheet ID.')
     for field in ('fullTrackerTitle', 'remainingTrackerTitle'):
         value = settings[field]
@@ -131,7 +131,9 @@ def validate(payload, previous):
     if (url.scheme != 'https' or url.netloc != 'tv.datatracetitle.com'
             or url.username or url.password):
         raise ValueError('Use an HTTPS queue URL on tv.datatracetitle.com.')
-    if settings['serviceAccount']:
+    if payload.get('clearServiceAccount') is True:
+        settings['serviceAccount'] = ''
+    elif settings['serviceAccount']:
         settings['serviceAccount'] = service_account(settings['serviceAccount'])
     return settings
 

@@ -31,6 +31,11 @@ class CompletionBatchTests(unittest.TestCase):
             self.assertEqual(response.json['files'],2)
             self.assertEqual(response.json['orders'],2)
             self.assertEqual(response.json['conflicts'],2)
+            self.assertEqual([row['Order Number'] for row in response.json['completion_rows']],['A','D'])
+            self.assertEqual([row['Order Number'] for row in response.json['conflict_rows']],['B','C'])
+            conflict = response.json['conflict_rows'][1]['Reported times (U.S. Central)']
+            self.assertIn('2026-11-07 00:00:00 (one.xlsx, two.xlsx)',conflict)
+            self.assertIn('2026-11-08 00:00:00 (one.xlsx)',conflict)
             saved=Path(folder)/'production-exports/completion-uploads'/(response.json['token']+'.json')
             self.assertEqual(set(json.loads(saved.read_text())),{'a','d'})
 

@@ -71,6 +71,37 @@ class LocalSettingsTests(unittest.TestCase):
         self.assertEqual(self.client.post('/api/local/settings', json=self.settings).status_code, 403)
         self.assertEqual(self.client.post('/api/local/check-connection', json={}, headers={'X-Settings-Token': 'wrong'}).status_code, 403)
 
+    def test_titlevision_settings_can_be_saved_without_google_sheets(self):
+        payload = dict(self.settings, spreadsheetId='', username='fixture-user', password='fixture-password')
+        response = self.client.post('/api/local/settings', json=payload, headers=self.headers)
+        self.assertEqual(response.status_code, 200, response.json)
+        self.assertEqual(response.json['spreadsheetId'], '')
+        self.assertEqual(response.json['username'], 'fixture-user')
+        self.assertTrue(response.json['passwordSet'])
+        self.assertFalse(response.json['googleConfigured'])
+
+    def test_removing_service_account_turns_off_sheet_sync_and_persists(self):
+        raw = self.key()
+        (self.root / 'service_account.json').write_text(raw, encoding='utf-8')
+        saved = self.client.post('/api/local/settings', headers=self.headers, json=dict(
+            self.settings, spreadsheetId='a' * 30, password='fixture-password', serviceAccount=raw))
+        self.assertTrue(saved.json['googleConfigured'])
+        self.client.post('/api/sheet-sync', json={'enabled': True})
+        cleared = self.client.post('/api/local/settings', headers=self.headers,
+                                   json=dict(saved.json, clearServiceAccount=True))
+        self.assertEqual(cleared.status_code, 200, cleared.json)
+        self.assertEqual(cleared.json['serviceAccountEmail'], '')
+        self.assertEqual(cleared.json['spreadsheetId'], 'a' * 30)
+        self.assertTrue(cleared.json['passwordSet'])
+        self.assertFalse(cleared.json['googleConfigured'])
+        self.assertFalse(self.client.get('/api/sheet-sync').json['enabled'])
+
+        os.environ['GOOGLE_SERVICE_ACCOUNT_JSON'] = raw
+        local_settings.load_environment(self.root)
+        self.assertEqual(os.environ['GOOGLE_SERVICE_ACCOUNT_JSON'], '')
+        self.assertEqual(self.client.get('/api/local/settings').json['serviceAccountEmail'], '')
+        self.assertTrue((self.root / 'service_account.json').is_file())
+
     def test_validation_does_not_replace_saved_settings(self):
         for changes in ({'spreadsheetId': 'bad'}, {'queueUrl': 'https://example.com'},
                         {'remainingTrackerTitle': self.settings['fullTrackerTitle']}, {'serviceAccount': '{}'}):

@@ -46,10 +46,16 @@ test('detail dialogs filter beyond the first page, preserve the dialog on Escape
   await menu.getByRole('button',{name:'Apply',exact:true}).click();
   await expect(detail.locator('tbody tr')).toHaveCount(1);
   await expect(detail).toContainText('TV-62239');
+  let exported;
+  await page.route('**/api/export/filtered-excel',async route=>{
+    exported=route.request().postDataJSON();
+    await route.fulfill({body:'mock workbook',contentType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  });
   const download=page.waitForEvent('download');
-  await detail.getByRole('button',{name:'Filtered CSV',exact:true}).click();
-  const csv=await readFile(await (await download).path(),'utf8');
-  expect(csv).toContain('TV-62239');expect(csv).not.toContain('TV-62000');
+  await detail.getByRole('button',{name:'Filtered Excel',exact:true}).click();
+  expect((await download).suggestedFilename()).toContain('filtered.xlsx');
+  const workbookPayload=JSON.stringify(exported);
+  expect(workbookPayload).toContain('TV-62239');expect(workbookPayload).not.toContain('TV-62000');
   await detail.getByRole('button',{name:'Clear table filters',exact:true}).click();
   await expect(detail.locator('tbody tr')).toHaveCount(50);
   expect(errors).toEqual([]);

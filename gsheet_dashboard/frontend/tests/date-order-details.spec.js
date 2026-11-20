@@ -134,9 +134,15 @@ test('capacity totals sum direct counts and dates open exact received, completed
   await expect(dialog.locator('tbody tr')).toHaveCount(15);
   await dialog.getByLabel('Search detail records').fill(fixture.rows[64]['Order Number']);
   await expect(dialog.locator('tbody tr')).toHaveCount(1);
+  let exported;
+  await page.route('**/api/export/filtered-excel',async route=>{
+    exported=route.request().postDataJSON();
+    await route.fulfill({body:'mock workbook',contentType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  });
   const downloaded=page.waitForEvent('download');
-  await dialog.getByRole('button',{name:'Filtered CSV'}).click();
-  expect((await downloaded).suggestedFilename()).toContain('filtered.csv');
+  await dialog.getByRole('button',{name:'Filtered Excel'}).click();
+  expect((await downloaded).suggestedFilename()).toContain('filtered.xlsx');
+  expect(exported.rows.length).toBeGreaterThan(0);
   await dialog.getByRole('button',{name:'Completed 2',exact:true}).click();
   await expect(dialog.locator('tbody tr')).toHaveCount(2);
   await expect(dialog.getByLabel('Search detail records')).toHaveValue('');

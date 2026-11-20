@@ -32,6 +32,8 @@ export default function ProductionReport({revision,session,onImportsUpdated}) {
   const [statusOverrides,setStatusOverrides]=useSessionState(reportSession,'statusOverrides',{}),[customOrder,setCustomOrder]=useState(null),[customStatus,setCustomStatus]=useState('');
   const [editingStatus,setEditingStatus]=useState(null),[statusDraft,setStatusDraft]=useState('');
   const [completionUpload,setCompletionUpload]=useSessionState(reportSession,'completionUpload',null);
+  const [uploadDetails,setUploadDetails]=useState(null),[uploadSearch,setUploadSearch]=useState('');
+  const [uploadDetailsError,setUploadDetailsError]=useState('');
   const [completionDragging,setCompletionDragging]=useState(false);
   const [exportOptions,setExportOptions]=useSessionState(reportSession,'exportOptions',{new_orders:true,status_changes:true,completion_times:true,completed_tv:true});
   const anyExport=Object.values(exportOptions).some(Boolean);
@@ -39,7 +41,7 @@ export default function ProductionReport({revision,session,onImportsUpdated}) {
     if(data.export_options_version!==1||!data.export_options||Object.keys(exportOptions).some(key=>data.export_options[key]!==exportOptions[key]))
       throw Error('The running app server has not confirmed these export options. Restart the app to load the export update, then Check again. No export was started.');
   }
-  async function uploadCompletion(selected){
+  async function uploadCompletion(selected,{refreshDetails=false}={}){
     const files=Array.from(selected||[]);
     if(!files.length||busy)return;
     if(files.length>30||files.some(file=>!file.name.toLowerCase().endsWith('.xlsx'))){setError('Choose between 1 and 30 ExcelReport .xlsx files.');return;}
@@ -47,8 +49,23 @@ export default function ProductionReport({revision,session,onImportsUpdated}) {
     try{
       const form=new FormData();files.forEach(file=>form.append('files',file));
       const data=await api('/api/production-report/completion-upload',{method:'POST',body:form,timeoutMs:180000});
-      setCompletionUpload(data);invalidate();
-    }catch(error){setError(error.message);}finally{setBusy(false);}
+      if(refreshDetails&&(data.completion_rows?.length!==data.orders||data.conflict_rows?.length!==data.conflicts)){
+        throw Error('The running server returned counts only. Restart TV Tracker with the updated server, then upload the ExcelReports again.');
+      }
+      setCompletionUpload({...data,localFiles:files});invalidateCompletion();
+    }catch(error){
+      if(refreshDetails)setUploadDetailsError(error.message);
+      else setError(error.message);
+    }finally{setBusy(false);}
+  }
+  function removeCompletion(index){
+    if(busy)return;
+    const remaining=completionUpload.localFiles.filter((_,fileIndex)=>fileIndex!==index);
+    if(remaining.length)uploadCompletion(remaining);
+    else clearCompletion();
+  }
+  function clearCompletion(){
+    setCompletionUpload(null);setError('');invalidateCompletion();
   }
   const [routes,setRoutes]=useSessionState(reportSession,'routes',{}),[result,setResult]=useSessionState(reportSession,'result',null),[busy,setBusy]=useState(false),[error,setError]=useSessionState(reportSession,'error','');
   useEffect(()=>{let alive=true;api('/api/production-report').then(data=>{if(alive){setFolder(value=>value||data.folder);setPreviews(data.previews);setRestore(data.revert||null);setPreview(value=>value||String(data.selected_preview_id||data.previews[0]?.id||''));}}).catch(error=>{if(alive)setError(error.message);});return()=>{alive=false;};},[revision]);
@@ -74,7 +91,8 @@ export default function ProductionReport({revision,session,onImportsUpdated}) {
     catch(error){setError(error.message);}
     finally{setBusy(false);}
   }
-  const invalidate=()=>{setResult(null);setDetail(null);setRestore(null);setStatusOverrides({});setMessage('');};
+  const invalidateCompletion=()=>{setResult(null);setDetail(null);setStatusOverrides({});setMessage('');};
+  const invalidate=()=>{invalidateCompletion();setRestore(null);};
   async function changeStatus(row,status){
     const overrides={...statusOverrides,[row['Order Number']]:status};
     setBusy(true);setError('');
@@ -97,6 +115,21 @@ export default function ProductionReport({revision,session,onImportsUpdated}) {
   const appliedCounts=result?.completed?result.reports.reduce((total,file)=>({new_orders:total.new_orders+(file.missing||0),status_changes:total.status_changes+(file.status_changed||0),completion_times:total.completion_times+(file.completion_count||0),completed_tv:total.completed_tv+(file.completed_tv_count||0)}),{new_orders:0,status_changes:0,completion_times:0,completed_tv:0}):null;
   const detailRows=(detail?.orders||[]).filter(row=>!detailSearch.trim()||result.columns.some(column=>String(row[column]??'').toLowerCase().includes(detailSearch.trim().toLowerCase())));
   const searchableRows=useMemo(()=>(result?.rows||[]).map(({Destination,...row})=>row),[result]);
+  const conflictDetails=uploadDetails==='conflicts';
+  const uploadTitle=conflictDetails?'Conflicting orders excluded':'Orders with completion times';
+  const uploadColumns=conflictDetails?['Order Number','Reported times (U.S. Central)']:['Order Number','Completion time (IST)','Source files'];
+  const uploadRows=conflictDetails?completionUpload?.conflict_rows:completionUpload?.completion_rows;
+  const uploadCount=conflictDetails?completionUpload?.conflicts:completionUpload?.orders;
+  const searchOrder=uploadSearch.trim().toLowerCase();
+  function openUploadDetails(type){
+    setUploadSearch('');setUploadDetailsError('');setUploadDetails(type);
+    const rows=type==='conflicts'?completionUpload.conflict_rows:completionUpload.completion_rows;
+    const count=type==='conflicts'?completionUpload.conflicts:completionUpload.orders;
+    if(count>0&&(!Array.isArray(rows)||rows.length!==count)){
+      if(completionUpload.localFiles?.length)uploadCompletion(completionUpload.localFiles,{refreshDetails:true});
+      else setUploadDetailsError('Upload the ExcelReports again to load order details for this batch.');
+    }
+  }
   return <section className="production-report">
     <div className="production-report-header"><div className="section-heading"><div><h2>Production Report</h2><p className="muted">Add missing preview orders to your two production workbooks.</p></div></div>
     <div className="production-report-search"><ReportOrderSearch name="Production Report" rows={searchableRows} columns={result?.columns||[]} disabled={!result||busy}/>{!result&&<p className="muted">Click Check folder &amp; orders below to load the selected preview for order-number search.</p>}</div>
@@ -108,12 +141,30 @@ export default function ProductionReport({revision,session,onImportsUpdated}) {
       <div className={`production-completion-upload${completionDragging?' is-dragging':''}`} onDragOver={event=>{event.preventDefault();event.dataTransfer.dropEffect=busy?'none':'copy';if(!busy)setCompletionDragging(true);}} onDragLeave={event=>{if(!event.currentTarget.contains(event.relatedTarget))setCompletionDragging(false);}} onDrop={event=>{event.preventDefault();setCompletionDragging(false);uploadCompletion(event.dataTransfer.files);}} aria-busy={busy}><FileSpreadsheet size={30} aria-hidden="true"/><h3>Completed ExcelReports</h3><p className="muted">Upload ExcelReports to fill missing Out Times. TitleVision completion times are converted from U.S. Central to India time before applying the Friday rollover.</p><label className="production-upload-button"><Upload size={18} aria-hidden="true"/><span>{completionUpload?'Replace ExcelReports':'Upload multiple files'}</span><input type="file" multiple accept=".xlsx" aria-label="Upload completed ExcelReport" disabled={busy} onChange={event=>{uploadCompletion(event.target.files);event.target.value='';}}/></label>
       <p className="muted">Up to 30 .xlsx files · 20 MB per file · 100 MB total. A new upload replaces the selected batch.</p>
 
-      {completionUpload&&<div className="production-upload-summary" role="status"><p>{completionUpload.files||1} files selected · {completionUpload.orders} orders with completion times · {completionUpload.conflicts} conflicting orders excluded</p><ul>{(completionUpload.names||[completionUpload.name]).map((name,index)=><li key={`${index}-${name}`}>{name}</li>)}</ul><button type="button" className="secondary" disabled={busy} onClick={()=>{setCompletionUpload(null);invalidate();}}>Remove completion reports</button></div>}
+      {completionUpload&&<div className="production-upload-summary">
+        <p role="status">{completionUpload.files||1} files selected · <button type="button" disabled={busy} className="production-upload-count" onClick={()=>openUploadDetails('orders')}>{completionUpload.orders} orders with completion times</button> · <button type="button" disabled={busy} className="production-upload-count" onClick={()=>openUploadDetails('conflicts')}>{completionUpload.conflicts} conflicting orders excluded</button></p>
+        <ul>{(completionUpload.names||[completionUpload.name]).map((name,index)=><li key={`${index}-${name}`}>
+          <span>{name}</span>
+          {completionUpload.localFiles&&<button type="button" className="production-remove-file" aria-label={`Remove ${name}`} title={`Remove ${name}`} disabled={busy} onClick={()=>removeCompletion(index)}><X size={16} aria-hidden="true"/></button>}
+        </li>)}</ul>
+        <button type="button" className="secondary" disabled={busy} onClick={clearCompletion}>Remove completion reports</button>
+      </div>}
       </div>
 
       <div className="production-main-actions"><button className="secondary action-check" disabled={busy||!folder.trim()||!preview||!anyExport} onClick={()=>run('check')}><Search size={18}/>{busy?'Working…':'Check folder & orders'}</button><button className="primary action-proceed" disabled={busy||!result||result.completed||(exportOptions.new_orders&&!!result.unresolved.length)||!anyExport} onClick={()=>run('proceed')}><CheckCircle2 size={19}/>Proceed — update selected orders</button><button type="button" className="secondary action-revert" disabled={busy||!restore} onClick={()=>{setError("");setConfirmRevert(true);}} title="Restore the workbooks from before the latest Proceed"><Undo2 size={19}/>Revert Excel</button></div>
       <fieldset className="production-export-options" disabled={busy}><legend>Choose what to update in Excel</legend><div className="production-export-switches">{[['new_orders','Newly orders'],['status_changes','Status changed'],['completion_times','Completion times'],['completed_tv','Completed in TV']].map(([key,label])=><button key={key} type="button" role="switch" aria-label={label} aria-checked={exportOptions[key]} onClick={()=>{setExportOptions({...exportOptions,[key]:!exportOptions[key]});setDetail(null);setEditingStatus(null);setMessage('');setError('');}}><span>{label}</span><span className="production-switch-track" aria-hidden="true"><span className="production-switch-thumb"/><span>{exportOptions[key]?'ON':'OFF'}</span></span></button>)}</div>{!anyExport&&<p role="status">Turn on at least one option to continue.</p>}</fieldset>
     </div>
+    {uploadDetails&&completionUpload&&<Dialog title={uploadTitle} className="production-orders-dialog production-upload-dialog" initialFocus=".production-orders-search input" onClose={()=>setUploadDetails(null)}>
+      <div className="dialog-content">
+        {conflictDetails&&<p className="production-status-help">These orders have different completion times in the uploaded reports and were excluded from the batch.</p>}
+        {uploadDetailsError?<p role="alert">{uploadDetailsError}</p>:busy?<p role="status">Loading order details…</p>:uploadCount===0?
+          <p>{conflictDetails?'No conflicting orders in this upload.':'No orders with completion times in this upload.'}</p>:
+          Array.isArray(uploadRows)&&uploadRows.length===uploadCount&&<>
+            <label className="search-input production-orders-search"><Search size={16}/><input aria-label="Search by order number" placeholder="Search by order number" value={uploadSearch} onChange={event=>setUploadSearch(event.target.value)}/></label>
+            <DataTable name={uploadTitle} columns={uploadColumns} rows={searchOrder?uploadRows.filter(row=>row['Order Number'].toLowerCase().includes(searchOrder)):uploadRows} filterable={false}/>
+          </>}
+      </div>
+    </Dialog>}
     {error&&<div role="alert" className="production-revert-warning production-proceed-warning"><span className="production-revert-warning-icon" aria-hidden="true"><AlertTriangle size={26}/></span><div><strong>Action needed to continue</strong><p>{error}</p></div></div>}
     {customOrder&&<Dialog title="Add production status" className="production-add-status-dialog" onClose={()=>{if(!busy)setCustomOrder(null);}}><form className="dialog-content" onSubmit={event=>{event.preventDefault();changeStatus(customOrder,customStatus.trim());}}><p className="production-add-status-context">Add a status for <strong>{customOrder['Order Number']}</strong>.</p><label htmlFor="production-new-status">New status<input id="production-new-status" autoFocus required autoComplete="off" aria-label="New planned status" placeholder="e.g. Waiting for review" maxLength={256} value={customStatus} disabled={busy} onChange={event=>setCustomStatus(event.target.value)}/></label><p className="production-add-status-hint">This selects the status for your planned update. Click Proceed later to apply it to Excel.</p>{error&&<p className="notice warning" role="alert">{error}</p>}<div className="production-add-status-actions"><button type="button" className="secondary" disabled={busy} onClick={()=>setCustomOrder(null)}>Cancel</button><button type="submit" className="primary" disabled={busy||!customStatus.trim()}>{busy?'Saving…':'Use status'}</button></div></form></Dialog>}
     {message&&<SuccessNotice title="Excel reverted successfully"><p>{message}</p></SuccessNotice>}

@@ -335,7 +335,16 @@ function App() {
   }
   const [sheetSync,setSheetSync]=useState(false);
   useEffect(()=>{api('/api/sheet-sync').then(value=>setSheetSync(value.enabled)).catch(()=>{});},[]);
-  async function toggleSheetSync(){try{const value=await api('/api/sheet-sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:!sheetSync})});setSheetSync(value.enabled);}catch(e){setError(e.message);}}
+  async function toggleSheetSync(){
+    if(!sheetSync&&state.capabilities?.google_configured===false){
+      window.dispatchEvent(new CustomEvent('datatrace:settings',{detail:{sheetSyncSetup:true}}));
+      return;
+    }
+    try{
+      const value=await api('/api/sheet-sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:!sheetSync})});
+      setSheetSync(value.enabled);
+    }catch(e){setError(e.message);}
+  }
   async function syncSheets(){setPending(true);setError('');try{
     if(reportMode==='excel'||!selected){const result=await api('/api/report-publish',{method:'POST',timeoutMs:180000});if(!result.synced&&!result.queued)throw Error(result.sync_error);}
     else {

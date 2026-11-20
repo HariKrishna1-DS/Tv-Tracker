@@ -23,7 +23,7 @@ function textColorForBg(color) {
   return (r * 299 + g * 587 + b * 114) / 1000 > 155 ? '#111827' : '#ffffff';
 }
 async function api(url, options = {}) {
-  const {timeoutMs=30000, ...requestOptions}=options;
+  const {timeoutMs=30000, responseType, ...requestOptions}=options;
   const retryable=['GET','HEAD'].includes((requestOptions.method||'GET').toUpperCase());
   let response;
   for(let attempt=0;attempt<3;attempt++){
@@ -46,6 +46,7 @@ async function api(url, options = {}) {
     error.status=response.status;
     throw error;
   }
+  if(responseType==='blob')return response.blob();
   const body = await response.json();
   if (body.clock) body.clock.receivedAt = performance.now();
   return body;

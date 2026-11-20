@@ -70,7 +70,7 @@ function DesktopUpdates({running}) {
   </section>;
 }
 
-function Connections({onClose,running,initialTab='connections'}) {
+function Connections({onClose,running,initialTab='connections',sheetSyncSetup=false}) {
   const [form,setForm]=useState(null),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[error,setError]=useState(''),[tab,setTab]=useState(initialTab);
   const keyInput=useRef(), saved=useRef(false);
   const desktop=!!window.desktop;
@@ -85,8 +85,27 @@ function Connections({onClose,running,initialTab='connections'}) {
   const update=(key,value)=>setForm(current=>({...current,[key]:value}));
   async function action(fn) {setBusy(true);setError('');setMessage('');try{await fn();}catch(e){setError(e.message.replace(/^Error invoking remote method '[^']+': Error: /,''));}finally{setBusy(false);}}
   function close(){if(busy)return;if(!desktop&&saved.current)location.reload();else onClose();}
-  async function save(event) {event.preventDefault();await action(async()=>{if(desktop){await window.desktop.saveSettings(form);setMessage('Settings saved. Reopening your workspace…');}else{const value=await localRequest('settings',form);setForm({...value,password:''});saved.current=true;setMessage('Settings saved. You can test the connection now.');}});}
-  async function importKey(event){const file=event.target.files?.[0];event.target.value='';if(!file)return;await action(async()=>{if(file.size>65536)throw Error('Choose a service-account JSON file smaller than 64 KB.');const raw=await file.text();let value;try{value=JSON.parse(raw.replace(/^\uFEFF/,''));}catch{throw Error('The selected file is not valid JSON.');}if(value?.type!=='service_account'||!value.client_email||!value.private_key)throw Error('Choose a Google service-account JSON key.');setForm(current=>({...current,serviceAccount:JSON.stringify(value),serviceAccountEmail:value.client_email}));setMessage('Key selected. Save settings to apply it.');});}
+  async function save(event) {
+    event.preventDefault();
+    await action(async()=>{
+      const payload=form.clearServiceAccount?{...form,serviceAccount:''}:form;
+      if(desktop){
+        await window.desktop.saveSettings(payload);
+        setMessage('Settings saved. Reopening your workspace…');
+      }else{
+        const value=await localRequest('settings',payload);
+        if(form.clearServiceAccount&&value.serviceAccountEmail)throw Error('The local server still has the saved key. Restart it and try again.');
+        setForm({...value,password:''});
+        saved.current=true;
+        setMessage(form.clearServiceAccount?'Service-account key removed.':value.googleConfigured?'Settings saved. You can test the connection now.':'Settings saved.');
+      }
+    });
+  }
+  function selectKey(email,serviceAccount){
+    setForm(current=>({...current,serviceAccount,serviceAccountEmail:email,clearServiceAccount:false}));
+    setMessage('Key selected. Save settings to apply it.');
+  }
+  async function importKey(event){const file=event.target.files?.[0];event.target.value='';if(!file)return;await action(async()=>{if(file.size>65536)throw Error('Choose a service-account JSON file smaller than 64 KB.');const raw=await file.text();let value;try{value=JSON.parse(raw.replace(/^\uFEFF/,''));}catch{throw Error('The selected file is not valid JSON.');}if(value?.type!=='service_account'||!value.client_email||!value.private_key)throw Error('Choose a Google service-account JSON key.');selectKey(value.client_email,JSON.stringify(value));});}
   async function checkConnection() {await action(async()=>{if(!desktop){const value=await localRequest('check-connection',{});setMessage(`Connected to ${value.title}.${value.missingTrackers.length?` Tracker tabs not found: ${value.missingTrackers.join(', ')}.`:' Both tracker tabs are available.'}`);return;}const response=await fetch('/api/desktop/check-connection',{method:'POST',signal:AbortSignal.timeout(120000)});const value=await response.json();if(!response.ok)throw Error(value.error);setMessage(`Connected. ${value.orders.toLocaleString()} production orders are available. Next capture: preview${value.next_preview}.`);});}
   return <Dialog title="Connections & settings" onClose={close} className="settings-dialog">
     {!form?<div className="settings-body">{error?<p role="alert">{error}</p>:<LoadingScreen title="Loading settings…"/>}</div>:<form onSubmit={save}>
@@ -94,13 +113,21 @@ function Connections({onClose,running,initialTab='connections'}) {
       <div className="settings-body" role="tabpanel">
       {form.connectionRecovery&&<div className="notice warning" role="alert">{form.connectionRecovery.message}</div>}
       {tab==='connections'?<>
-        <div className="settings-section"><div className="settings-section-heading google-sheets-heading"><div className="settings-section-icon"><Database size={20}/></div><div><h3>Google Sheets</h3><p>Your production source of truth</p></div><div className="google-sheets-resource-links" aria-label="Google Sheets setup links"><a className="secondary" href="https://console.cloud.google.com/welcome" target="_blank" rel="noopener noreferrer" title="Open Google Cloud to manage service-account keys">SA Key</a><a className="secondary" href="https://console.cloud.google.com/apis/api/sheets.googleapis.com" target="_blank" rel="noopener noreferrer" title="Open the Google Sheets API page">Google Sheets Enable</a><a className="secondary" href="https://docs.google.com/spreadsheets/" target="_blank" rel="noopener noreferrer" title="Open Google Spreadsheets">Spreadsheet</a></div><span className={`connection-pill ${form.googleConfigured?'ready':''}`}>{form.googleConfigured?'Details saved':'Setup needed'}</span></div>
+        <div className="settings-section"><div className="settings-section-heading google-sheets-heading"><div className="settings-section-icon"><Database size={20}/></div><div><h3>Google Sheets</h3><p>Optional for local use</p></div><div className="google-sheets-resource-links" aria-label="Google Sheets setup links"><a className="secondary" href="https://console.cloud.google.com/welcome" target="_blank" rel="noopener noreferrer" title="Open Google Cloud to manage service-account keys">SA Key</a><a className="secondary" href="https://console.cloud.google.com/apis/api/sheets.googleapis.com" target="_blank" rel="noopener noreferrer" title="Open the Google Sheets API page">Google Sheets Enable</a><a className="secondary" href="https://docs.google.com/spreadsheets/" target="_blank" rel="noopener noreferrer" title="Open Google Spreadsheets">Spreadsheet</a></div><span className={`connection-pill ${form.googleConfigured?'ready':''}`}>{form.googleConfigured?'Details saved':'Optional'}</span></div>
+          {!form.googleConfigured&&<p className="field-help" role={sheetSyncSetup?'status':undefined}>{sheetSyncSetup?'Set up Google Sheets to turn on Sheet Sync. ':''}Create or open a spreadsheet, enable the Google Sheets API, and upload a service-account JSON key. Share the spreadsheet with the service account as Editor, then save settings.</p>}
+          {sheetSyncSetup&&form.googleConfigured&&<p className="field-help" role="status">Google Sheets details are saved. Close settings and turn on Sheet Sync.</p>}
           <label>Spreadsheet URL or ID<input autoFocus value={form.spreadsheetId} onChange={e=>update('spreadsheetId',e.target.value)} placeholder="https://docs.google.com/spreadsheets/d/…" autoComplete="off"/></label>
           <div className="form-grid"><label>Full Title tracker tab<input value={form.fullTrackerTitle} onChange={e=>update('fullTrackerTitle',e.target.value)} required maxLength={100}/></label><label>Remaining Products tracker tab<input value={form.remainingTrackerTitle} onChange={e=>update('remainingTrackerTitle',e.target.value)} required maxLength={100}/></label></div>
           {!desktop&&<input ref={keyInput} type="file" accept=".json,application/json" hidden aria-label="Service-account JSON key" onChange={importKey}/>}
-          <div className="credential-row"><div><strong>Service-account key</strong><p>{form.serviceAccountEmail||'Import the JSON key from your Google Cloud project.'}</p></div><button type="button" className="secondary" disabled={busy} onClick={()=>desktop?action(async()=>{const value=await window.desktop.importServiceAccount();if(value){update('serviceAccountEmail',value.email);setMessage('Key selected. Save settings to apply it.');}}):keyInput.current?.click()}><KeyRound size={16}/>{form.serviceAccountEmail?'Replace key':'Import key'}</button></div>
-          {form.serviceAccountEmail&&<p className="field-help">Share the spreadsheet with this service-account email as Editor. Save settings, then test the saved connection to verify access.</p>}
-          <button type="button" className="text-button" disabled={busy||running} onClick={checkConnection}>Test saved Google Sheets connection</button>
+          <div className="credential-row">
+            <div><strong>Service-account key</strong><p>{form.clearServiceAccount?<span role="status">Key will be removed when you save. Sheet Sync will turn off.</span>:form.serviceAccountEmail||'Upload a service-account .json file from Google Cloud.'}</p></div>
+            <div className="inline">
+              <button type="button" className="secondary" disabled={busy} onClick={()=>desktop?action(async()=>{const value=await window.desktop.importServiceAccount();if(value)selectKey(value.email);}):keyInput.current?.click()}><KeyRound size={16}/>{form.serviceAccountEmail&&!form.clearServiceAccount?'Replace key':'Upload JSON key'}</button>
+              {form.serviceAccountEmail&&<button type="button" className="secondary" disabled={busy} onClick={()=>{update('clearServiceAccount',!form.clearServiceAccount);setMessage('');}}>{form.clearServiceAccount?'Undo removal':'Remove key'}</button>}
+            </div>
+          </div>
+          {form.serviceAccountEmail&&!form.clearServiceAccount&&<p className="field-help">Share the spreadsheet with this service-account email as Editor. Save settings, then test the saved connection to verify access.</p>}
+          <button type="button" className="text-button" disabled={busy||running||!form.googleConfigured||form.clearServiceAccount} onClick={checkConnection}>Test saved Google Sheets connection</button>
         </div>
         <div className="settings-section"><div className="settings-section-heading"><div className="settings-section-icon"><Plug size={20}/></div><div><h3>TitleVision</h3><p>Secure queue extraction</p></div><span className={`connection-pill ${form.passwordSet?'ready':''}`}>{form.passwordSet?'Credentials saved':'Setup needed'}</span></div>
           <div className="form-grid"><label>Username<input value={form.username} onChange={e=>update('username',e.target.value)} autoComplete="username"/></label><label>Password<input type="password" value={form.password} onChange={e=>update('password',e.target.value)} placeholder={form.passwordSet?'Saved securely · leave blank to keep':'Enter your password'} autoComplete="new-password"/></label></div>
@@ -122,6 +149,7 @@ function Connections({onClose,running,initialTab='connections'}) {
 const PAGES=[['captures','Saved captures'],['daily','Daily Orders'],['monthly','Monthly Orders'],['sla','SLA Status'],['slaCompare','SLA Compare'],['capacity','Capacity Report'],['changes','Changes between captures']];
 export function DesktopTools({onNavigate,onImport,running}) {
   const [settings,setSettings]=useState(false),[commands,setCommands]=useState(false),[query,setQuery]=useState(''),[settingsTab,setSettingsTab]=useState('connections');
+  const [sheetSyncSetup,setSheetSyncSetup]=useState(false);
   const [updateState,setUpdateState]=useState(null),[connectionRecovery,setConnectionRecovery]=useState(null);
   useEffect(()=>{
     let active=true;
@@ -132,7 +160,7 @@ export function DesktopTools({onNavigate,onImport,running}) {
     return()=>{active=false;unsubscribe?.();};
   },[]);
   useEffect(()=>{
-    const open=()=>{setSettingsTab('connections');setSettings(true);};
+    const open=event=>{setSheetSyncSetup(event?.detail?.sheetSyncSetup===true);setSettingsTab('connections');setSettings(true);};
     const keyboard=e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();setQuery('');setCommands(value=>!value);}if((e.ctrlKey||e.metaKey)&&e.key===','){e.preventDefault();setSettings(true);}};
     const unsubscribe=window.desktop?.onCommand(command=>{if(command==='settings')open();if(command==='updates'){setSettingsTab('updates');setSettings(true);}if(command==='commands'){setQuery('');setCommands(true);}});
     window.addEventListener('datatrace:settings',open);window.addEventListener('keydown',keyboard);
@@ -140,7 +168,7 @@ export function DesktopTools({onNavigate,onImport,running}) {
   },[]);
   const options=[...PAGES.map(([id,label])=>({label,action:()=>onNavigate(id)})),{label:'Import Excel or CSV',action:onImport},{label:'Connections & settings',action:()=>setSettings(true)}].filter(item=>item.label.toLowerCase().includes(query.toLowerCase()));
   return <>{connectionRecovery&&<button className="secondary" onClick={()=>{setSettingsTab('connections');setSettings(true);}}>Review connections</button>}{updateState?.status==='available'&&<button className="secondary" title={`Download version ${updateState.version}`} onClick={()=>{setSettingsTab('updates');setSettings(true);}}><Download size={15}/>Version {updateState.version} available</button>}<button className="quick-command" aria-label="Quick actions" onClick={()=>{setQuery('');setCommands(true);}}><Command size={15}/><span>Quick actions</span><kbd>Ctrl K</kbd></button>
-    {settings&&<Connections onClose={()=>setSettings(false)} running={running} initialTab={settingsTab}/>}
+    {settings&&<Connections onClose={()=>{setSettings(false);setSheetSyncSetup(false);}} running={running} initialTab={settingsTab} sheetSyncSetup={sheetSyncSetup}/>}
     {commands&&<Dialog title="Quick actions" onClose={()=>setCommands(false)} className="command-dialog" initialFocus=".command-search input"><div className="command-search"><Command size={19}/><input aria-label="Find an action" autoFocus placeholder="Where would you like to go?" value={query} onChange={e=>setQuery(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&options[0]){e.preventDefault();setCommands(false);options[0].action();}}}/></div><div className="command-results">{options.map(item=><button key={item.label} onClick={()=>{setCommands(false);item.action();}}>{item.label}<ArrowRight size={15}/></button>)}{!options.length&&<p className="muted">No matching actions</p>}</div><div className="command-hint">Tab to move · Enter to open · Esc to close</div></Dialog>}
   </>;
 }

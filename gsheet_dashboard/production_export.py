@@ -134,7 +134,7 @@ def template(path):
     return book, sheet, header_row, headers, existing, products
 
 
-def read_completion_report(data, excluded_orders=None):
+def read_completion_report(data, excluded_orders=None, record_timestamp=None):
     """Read absolute completion timestamps; conflicting duplicates are excluded."""
     book = load_workbook(BytesIO(data), read_only=True, data_only=True)
     values, conflicts, found = {}, set(), False
@@ -157,6 +157,8 @@ def read_completion_report(data, excluded_orders=None):
                 value = capture_time(raw) if isinstance(raw, (str, datetime)) else None
                 if not key or value is None: continue
                 value = value.isoformat()
+                if record_timestamp is not None:
+                    record_timestamp(key, str(row[oi]).strip(), value)
                 if key in values and values[key] != value: conflicts.add(key)
                 values[key] = value
         if not found: raise ValueError('Upload an ExcelReport with Order Number and Completed Time (hours) columns.')
@@ -580,17 +582,23 @@ def register_production_export(app, workspace, load_report, refresh_workbooks=No
             return jsonify(error='Choose between 1 and 30 ExcelReport .xlsx files.'),400
         try:
             times, excluded, names, total_bytes = {}, set(), [], 0
+            candidates, order_numbers = {}, {}
+
+            def record_timestamp(key, order_number, value):
+                order_numbers.setdefault(key, order_number)
+                candidates.setdefault(key, {}).setdefault(value, set()).add(names[-1])
+
             for upload in uploads:
                 data = upload.read(20*1024*1024+1)
                 total_bytes += len(data)
                 if len(data)>20*1024*1024 or total_bytes>100*1024*1024:
                     return jsonify(error='Each report must be at most 20 MB; the combined upload must be at most 100 MB.'),400
-                values, _ = read_completion_report(data, excluded)
+                names.append(Path(upload.filename).name)
+                values, _ = read_completion_report(data, excluded, record_timestamp)
                 for key, value in values.items():
                     if key in times and times[key] != value:
                         excluded.add(key)
                     times[key] = value
-                names.append(Path(upload.filename).name)
             # Store Indian wall time for the timezone-free Excel Out Time cells.
             # Do this before the production plan applies its weekend rule.
             times = {
@@ -602,7 +610,19 @@ def register_production_export(app, workspace, load_report, refresh_workbooks=No
             directory = exports/'completion-uploads'
             directory.mkdir(parents=True,exist_ok=True)
             (directory/(token+'.json')).write_text(json.dumps(times))
-            return jsonify(token=token,name=', '.join(names),names=names,files=len(names),orders=len(times),conflicts=len(excluded))
+            completion_rows = [
+                {'Order Number': order_numbers[key], 'Completion time (IST)': value.replace('T', ' '),
+                 'Source files': ', '.join(sorted(next(iter(candidates[key].values()))))}
+                for key, value in times.items()
+            ]
+            conflict_rows = [
+                {'Order Number': order_numbers[key], 'Reported times (U.S. Central)': '\n'.join(
+                    f"{value.replace('T', ' ')} ({', '.join(sorted(files))})"
+                    for value, files in sorted(candidates[key].items()))}
+                for key in sorted(excluded)
+            ]
+            return jsonify(token=token,name=', '.join(names),names=names,files=len(names),orders=len(times),
+                           conflicts=len(excluded),completion_rows=completion_rows,conflict_rows=conflict_rows)
         except Exception:
             return jsonify(error='Could not read the completion report. Use a valid .xlsx file with Order Number and Completed Time (hours) columns.'),400
 

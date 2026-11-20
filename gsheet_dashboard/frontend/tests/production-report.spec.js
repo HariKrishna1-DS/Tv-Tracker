@@ -104,11 +104,22 @@ test('export switches keep both reports visible and submit completion-only optio
 test('completion upload is included in checks and shows completion counts and details',async({page})=>{
   const fixture=workspaceFixture(3);
   let token;
+  const uploads=[];
   await page.route('**/api/**',async route=>{
     const name=new URL(route.request().url()).pathname;
     let body=fixture.response(name);
     if(name==='/api/production-report')body={folder:'C:\\Reports',previews:fixture.previews,selected_preview_id:32};
-    if(name.endsWith('/completion-upload'))body={token:'test-token',name:'ExcelReport.xlsx',orders:1,conflicts:0};
+    if(name.endsWith('/completion-upload')){
+      const names=Array.from(route.request().postData().matchAll(/filename="([^"]+)"/g),match=>match[1]);
+      uploads.push(names);
+      body={token:`test-token-${uploads.length}`,names,files:names.length,orders:1,conflicts:names.length-1,
+        completion_rows:[{'Order Number':'DONE-1','Completion time (IST)':'2026-11-11 06:19:29','Source files':names[0]}],
+        conflict_rows:names.length>1?[{'Order Number':'CONFLICT-1','Reported times (U.S. Central)':'Two different times'}]:[]};
+      if(uploads.length===1){
+        delete body.completion_rows;
+        delete body.conflict_rows;
+      }
+    }
     if(name.endsWith('/check')){
       token=route.request().postDataJSON().completion_token;
       body={preview_name:'preview32',fingerprint:'checked',columns:['Order Number','Out Time'],rows:[],unresolved:[],reports:[{kind:'full',name:'Full Search.xlsx',sheet:'TV Orders',missing:0,existing:2,skipped:0,orders:[],completion_count:1,completion_kept:1,completion_unmatched:0,completion_orders:[{'Order Number':'DONE-1','Out Time':'2026-11-11T06:19:29'}]}]};
@@ -119,8 +130,16 @@ test('completion upload is included in checks and shows completion counts and de
   await page.goto('/');
   await page.getByRole('button',{name:'Production Report',exact:true}).click();
   await page.getByLabel('Production report folder',{exact:true}).fill('C:\\Reports\\Session');
-  await page.getByLabel('Upload completed ExcelReport',{exact:true}).setInputFiles({name:'ExcelReport.xlsx',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:Buffer.from('mock upload')});
-  await expect(page.getByText('1 files selected · 1 orders with completion times · 0 conflicting orders excluded')).toBeVisible();
+  await page.getByLabel('Upload completed ExcelReport',{exact:true}).setInputFiles(['ExcelReport.xlsx','ExcelReport(2).xlsx'].map(name=>({name,mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:Buffer.from('mock upload')})));
+  await page.getByRole('button',{name:'1 orders with completion times',exact:true}).click();
+  const uploaded=page.getByRole('dialog',{name:'Orders with completion times'});
+  await expect(uploaded.getByRole('cell',{name:'DONE-1',exact:true})).toBeVisible();
+  await uploaded.getByRole('textbox',{name:'Search by order number'}).fill('unknown');
+  await expect(uploaded.getByText('No matching rows')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await page.getByRole('button',{name:'1 conflicting orders excluded',exact:true}).click();
+  await expect(page.getByRole('dialog',{name:'Conflicting orders excluded'}).getByRole('cell',{name:'CONFLICT-1',exact:true})).toBeVisible();
+  await page.keyboard.press('Escape');
   await expect(page.getByText('ExcelReport.xlsx',{exact:true})).toBeVisible();
   await page.getByRole('button',{name:'Check folder & orders',exact:true}).click();
   await page.getByRole('button',{name:'1 Completion times to update Included View orders',exact:true}).click();
@@ -138,7 +157,18 @@ test('completion upload is included in checks and shows completion counts and de
   await expect(page.getByRole('switch',{name:'Status changed',exact:true})).toHaveAttribute('aria-checked','false');
   await expect(page.getByRole('button',{name:'1 Completion times to update Included View orders',exact:true})).toBeVisible();
   await page.getByRole('button',{name:'Check folder & orders',exact:true}).click();
-  expect(token).toBe('test-token');
+  await expect.poll(()=>token).toBe('test-token-2');
+  await page.getByRole('button',{name:'Remove ExcelReport(2).xlsx',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Remove ExcelReport(2).xlsx',exact:true})).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'0 conflicting orders excluded',exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:/^Proceed/})).toBeDisabled();
+  await page.getByRole('button',{name:'Check folder & orders',exact:true}).click();
+  await expect.poll(()=>token).toBe('test-token-3');
+  expect(uploads).toEqual([['ExcelReport.xlsx','ExcelReport(2).xlsx'],['ExcelReport.xlsx','ExcelReport(2).xlsx'],['ExcelReport.xlsx']]);
+  await expect(page.getByRole('button',{name:'1 Completion times to update Included View orders',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Remove ExcelReport.xlsx',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Remove completion reports',exact:true})).toHaveCount(0);
+  expect(uploads).toHaveLength(3);
 });
 
 test('report titles and counts open only their missing orders in a popup',async({page})=>{

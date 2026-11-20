@@ -64,11 +64,17 @@ test('latest imported date has matching totals, download date and arrival fields
   await expect(dialog.getByRole('button',{name:'Edit details LATEST-001',exact:true})).toBeVisible();
   await expect(dialog.getByRole('cell',{name:'10/13/2026 01:02:03 PM',exact:true})).toBeVisible();
   await dialog.getByLabel('Search detail records').fill('LATEST-001');
+  let exported;
+  await page.route('**/api/export/filtered-excel',async route=>{
+    exported=route.request().postDataJSON();
+    await route.fulfill({body:'mock workbook',contentType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  });
   const downloaded=page.waitForEvent('download');
-  await dialog.getByRole('button',{name:'Filtered CSV'}).click();
-  const csv=await readFile(await (await downloaded).path(),'utf8');
-  expect(csv).toContain('Arrival Date');expect(csv).toContain('Arrival Time');expect(csv).toContain('10/13/2026 01:02:03 PM');
-  expect(csv).not.toContain('LATEST-002');
+  await dialog.getByRole('button',{name:'Filtered Excel'}).click();
+  expect((await downloaded).suggestedFilename()).toContain('filtered.xlsx');
+  const workbookPayload=JSON.stringify(exported);
+  expect(workbookPayload).toContain('Arrival Date');expect(workbookPayload).toContain('Arrival Time');expect(workbookPayload).toContain('10/13/2026 01:02:03 PM');
+  expect(workbookPayload).not.toContain('LATEST-002');
   await dialog.screenshot({path:'test-results/sla-arrival-details.png'});
   expect(errors).toEqual([]);
 });

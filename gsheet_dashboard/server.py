@@ -206,7 +206,7 @@ def create_app(root=None, runner=None, syncer=None, start_scheduler=False, time_
 
     @app.post('/api/local/settings')
     def save_local_settings():
-        nonlocal recovery_checked, cloud_schedule_loaded, connection_retry_after
+        nonlocal recovery_checked, cloud_schedule_loaded, connection_retry_after, sheet_sync_enabled
         if not gate.acquire(blocking=False):
             return jsonify(error='Wait for the current capture or sync to finish before saving connections.'), 409
         try:
@@ -222,8 +222,11 @@ def create_app(root=None, runner=None, syncer=None, start_scheduler=False, time_
             import monthly_production
             import sheets_repository
             previous_spreadsheet = sync_config.SPREADSHEET_ID
-            settings = local_settings.validate(request.get_json(), local_settings.current(sync_config))
+            payload = request.get_json()
+            settings = local_settings.validate(payload, local_settings.current(sync_config))
             local_settings.save(BASE_DIR, settings)
+            if payload.get('clearServiceAccount') is True:
+                sheet_sync_enabled = False
             importlib.reload(sync_config)
             # These modules retain imported connection constants; update them together
             # while capture/sync work is excluded, then discard connection-specific caches.
@@ -1449,6 +1452,24 @@ def create_app(root=None, runner=None, syncer=None, start_scheduler=False, time_
         if can_sync:
             begin_sync('import', saved['id'])
         return jsonify(dict(saved, auto_sync=can_sync)), 201
+
+    @app.post('/api/export/filtered-excel')
+    def filtered_excel():
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            raise ValueError('Choose a table to export.')
+        columns, rows = payload.get('columns'), payload.get('rows')
+        if (not isinstance(columns, list) or not 1 <= len(columns) <= 200
+                or not all(isinstance(column, str) and column for column in columns)
+                or not isinstance(rows, list) or len(rows) > 100000):
+            raise ValueError('Excel exports support up to 100,000 rows and 200 columns.')
+        if any(not isinstance(row, list) or len(row) != len(columns)
+               or any(value is not None and not isinstance(value, (str, int, float, bool)) for value in row)
+               for row in rows):
+            raise ValueError('The filtered rows must match the table columns.')
+        frame = pd.DataFrame(rows, columns=columns, dtype=object).fillna('')
+        return send_file(workbook(frame, 'FilteredOrders'), as_attachment=True, download_name='filtered.xlsx',
+                         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
     @app.get('/api/previews/<int:number>/download/<kind>')
     def download(number, kind):

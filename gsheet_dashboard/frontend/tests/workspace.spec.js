@@ -49,9 +49,15 @@ test('column unique values, filters, charts, comparison and repeat run',async({p
   await panel.getByLabel('Condition').selectOption('contains');
   await panel.getByLabel('Filter value').fill('Update');
   await expect(page.locator('.filter-toolbar .row-tally')).toHaveText('32 / 65 rows');
+  let exported;
+  await page.route('**/api/export/filtered-excel',async route=>{
+    exported=route.request().postDataJSON();
+    await route.fulfill({body:'mock workbook',contentType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  });
   const downloadEvent = page.waitForEvent('download');
-  await page.getByRole('button',{name:'Filtered CSV'}).first().click();
-  expect((await downloadEvent).suggestedFilename()).toContain('filtered.csv');
+  await page.getByRole('button',{name:'Filtered Excel'}).first().click();
+  expect((await downloadEvent).suggestedFilename()).toContain('filtered.xlsx');
+  expect(exported.rows.length).toBeGreaterThan(0);
   await panel.getByRole('button',{name:'Reset column'}).click();
   await panel.getByRole('button',{name:'Close filter'}).click();
   await page.getByRole('button',{name:'Overview',exact:true}).click();
