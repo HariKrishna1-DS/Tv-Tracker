@@ -1,14 +1,14 @@
-# Tv Tracker 1.0.23 — Windows desktop
+# Tv Tracker 2.0.3 — Windows desktop
 
 Tv Tracker is a local desktop workspace for TitleVision extraction, Google Sheets production tracking, saved captures, comparisons, and Power BI exports. Its Python and Node runtimes are bundled. No Render hosting or PostgreSQL service is required.
 
-The current source version is **1.0.23** on `tv-tracker-app`. Desktop and React package manifests and lockfiles use this version. See [1.0.23 release notes](docs/TV_TRACKER_1_0_23_RELEASE.md), [1.0.22 release notes](docs/TV_TRACKER_1_0_22_RELEASE.md), [1.0.21 release notes](docs/TV_TRACKER_1_0_21_RELEASE.md), [1.0.19 release notes](docs/TV_TRACKER_1_0_19_RELEASE.md) and [changes since 1.0.10](docs/TV_TRACKER_1_0_11_RELEASE.md) and the [1.0.14 release notes](docs/TV_TRACKER_1_0_14_RELEASE.md). Tracker SLA Status uses one selected saved preview; its dropdown updates the summary, cards, chart, Excel download and SLA tab in Google Sheets while preserving that tab's formatting.
+The current source version is **2.0.3** on `tv-tracker-app`. Desktop and React package manifests and lockfiles use this version. See [2.0.3 release notes](docs/TV_TRACKER_2_0_3_RELEASE.md), [2.0.2 release notes](docs/TV_TRACKER_2_0_2_RELEASE.md), [2.0.1 release notes](docs/TV_TRACKER_2_0_1_RELEASE.md), [1.0.23 release notes](docs/TV_TRACKER_1_0_23_RELEASE.md), [1.0.22 release notes](docs/TV_TRACKER_1_0_22_RELEASE.md), [1.0.21 release notes](docs/TV_TRACKER_1_0_21_RELEASE.md), [1.0.19 release notes](docs/TV_TRACKER_1_0_19_RELEASE.md) and [changes since 1.0.10](docs/TV_TRACKER_1_0_11_RELEASE.md) and the [1.0.14 release notes](docs/TV_TRACKER_1_0_14_RELEASE.md). Tracker SLA Status uses one selected saved preview; its dropdown updates the summary, cards, chart, Excel download and SLA tab in Google Sheets while preserving that tab's formatting.
 
 Version 1.0.10 includes the complete working local application: manual SLA statuses and orders, order search, column filters, full ETA comments and arrival dates, imported-report date selection, completion normalization, and the current capacity calculations. Version 1.0.9 omitted these local changes.
 
 ## Desktop branch
 
-**`tv-tracker-app`** contains the desktop application source, based on the earlier 2.6.0 code. `main` remains the upstream browser/sync project. This application branch was previously named `tv-tracker-online`.
+**`tv-tracker-app`** contains the desktop application source, based on the earlier 2.6.0 code. `main` also contains the desktop source. This application branch was previously named `tv-tracker-online`.
 
 ```powershell
 git fetch origin
@@ -20,11 +20,11 @@ The 2.1.0 integration incorporates upstream `db0c274` plus the existing desktop 
 
 ## Install and connect
 
-Install the Windows `.exe` from the [latest published release](https://github.com/HariKrishna1-DS/powerBI_Sync/releases/latest), or extract its portable ZIP and open **Tv Tracker.exe**. Configure the Google spreadsheet, service-account JSON key, and TitleVision credentials through **Connections & settings** (Ctrl+,). Each Windows profile saves its own connection; share the exact configured spreadsheet with that key's service-account email as Editor.
+Install the Windows `.exe` from the [latest published release](https://github.com/HariKrishna1-DS/Tv-Tracker/releases/latest), or extract its portable ZIP and open **Tv Tracker.exe**. Configure the Google spreadsheet, service-account JSON key, and TitleVision credentials through **Connections & settings** (Ctrl+,). Each Windows profile saves its own connection; share the exact configured spreadsheet with that key's service-account email as Editor.
 
 The app includes a single native window, system tray, encrypted credentials, an authenticated loopback engine, dated offline reports, backup/restore, and keyboard quick actions. Internet is required for extraction and Sheets sync. Saved captures and cached production reports remain available offline. Schedules need the app running and the computer awake.
 
-The rename preserves the previous DataTrace Studio profile and installer identity for upgrades. The Windows x64 build is unsigned.
+The rename preserves the previous DataTrace Studio profile and installer identity for upgrades.
 
 ## Current workflow
 
