@@ -883,6 +883,9 @@ def create_app(root=None, runner=None, syncer=None, start_scheduler=False, time_
         body = request.get_json(silent=True)
         if not isinstance(body, dict):
             raise ValueError('An SLA update is required.')
+        mode = report_workspace.read()['mode']
+        if body.get('mode', 'tracker') != mode:
+            return jsonify(error='The report source changed. Refresh the report before editing.'), 409
         bulk = request.path.endswith('/bulk')
         orders = body.get('orders') if bulk else [body]
         if not isinstance(orders, list) or not 1 <= len(orders) <= 10000:
@@ -890,9 +893,6 @@ def create_app(root=None, runner=None, syncer=None, start_scheduler=False, time_
         status = 'Missing' if body.get('status') == 'Missed' else body.get('status')
         if status not in ('On Time', 'Missing'):
             raise ValueError('Choose On Time or Missing.')
-        mode = report_workspace.read()['mode']
-        if body.get('mode', 'tracker') != mode:
-            return jsonify(error='The report source changed. Refresh the report before editing.'), 409
         selection = {}
         for order in orders:
             if not isinstance(order, dict):
