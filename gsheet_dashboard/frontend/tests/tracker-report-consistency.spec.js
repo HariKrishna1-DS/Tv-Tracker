@@ -49,11 +49,14 @@ test('Daily and monthly use tracker statuses while capacity shows its independen
   await page.getByRole('button',{name:'Capacity Report',exact:true}).click();
   await expect(page.getByRole('heading',{name:'Daily capacity',exact:true})).toBeVisible();
   await expect(page.locator('.page-heading .muted')).toHaveText('Plan capacity and track daily workload.');
-  await expect(page.locator('.workspace-context .context-preview')).toHaveText('Excel report');
+  await expect(page.locator('.workspace-context .context-preview')).toHaveText('Source: Excel report');
   const daily=page.locator('section.table-section').filter({has:page.getByRole('heading',{name:'Daily capacity',exact:true})});
   const values=await daily.locator('tbody tr').first().locator('td').allTextContents();
   expect(values).toEqual(['22-10-26','2','1','0','0','0','0','700','750']);
-  await expect(page.getByText('Imported Excel · October 2026',{exact:true})).toBeVisible();
+  const notes=page.getByText('Imported Excel · October 2026',{exact:true});
+  await expect(notes).toBeHidden();
+  await page.getByText('Capacity report details',{exact:true}).click();
+  await expect(notes).toBeVisible();
   await expect(page.getByText('Tracker reports are waiting for 2 saved captures to sync.',{exact:true})).toHaveCount(0);
   await page.screenshot({path:'test-results/tracker-report-capacity.png',fullPage:true});
 });
