@@ -1,5 +1,5 @@
 // Main-process-only updater. Stable releases follow GitHub's Latest designation.
-const PRODUCTION_UPDATE_FEED=Object.freeze({provider:'github',owner:'HariKrishna1-DS',repo:'powerBI_Sync',private:false});
+const PRODUCTION_UPDATE_FEED=Object.freeze({provider:'github',owner:'HariKrishna1-DS',repo:'Tv-Tracker',private:false});
 function createUpdater({updater, enabled, version, notify = () => {}, prepareInstall, recoverInstall = async () => {}}) {
   let state = {status: enabled ? 'idle' : 'unsupported', currentVersion: version, version: '', percent: 0, lastChecked: null, message: enabled ? 'Check for a new Windows release.' : 'Updates are available in the installed Windows app.'};
   let operation = false;

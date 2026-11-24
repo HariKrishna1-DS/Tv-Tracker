@@ -493,19 +493,16 @@ a.button-link { display: inline-flex; align-items: center; gap: 6px; text-decora
 .sla-status-workspace>.section-heading p,.sla-compare-workspace>.section-heading p { margin:3px 0 0; line-height:1.4; }
 .sla-status-workspace>.sla-preview-picker { margin:0; align-self:flex-start; }
 .sla-status-workspace .sla-report-tools { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:0; }
-.sla-status-workspace .sla-report-tools>.report-order-search,.capacity-report-tools>.report-order-search { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,300px); gap:8px; align-items:center; width:100%; max-width:100%; min-width:0; margin:0; }
-.capacity-report-tools>.report-order-search { grid-template-columns:max-content minmax(0,300px); }
-.sla-status-workspace .report-order-search-label,.capacity-report-tools>.report-order-search .report-order-search-label { grid-column:1; margin:0; font-size:11px; white-space:nowrap; }
-.sla-status-workspace .report-order-search>.search-input,.capacity-report-tools>.report-order-search>.search-input { grid-column:2; margin:0; width:100%; }
-.sla-status-workspace .report-order-search>[aria-live],.capacity-report-tools>.report-order-search>[aria-live] { grid-column:1/-1; min-width:0; max-width:100%; }
+.sla-status-workspace .sla-report-tools>.report-order-search { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,300px); gap:8px; align-items:center; width:100%; max-width:100%; min-width:0; margin:0; }
+.sla-status-workspace .report-order-search-label { grid-column:1; margin:0; font-size:11px; white-space:nowrap; }
+.sla-status-workspace .report-order-search>.search-input { grid-column:2; margin:0; width:100%; }
+.sla-status-workspace .report-order-search>[aria-live] { grid-column:1/-1; min-width:0; max-width:100%; }
 .sla-status-workspace>.metrics { margin:0; padding:0; gap:12px; }
 .sla-status-workspace>.metrics>.metric { padding:12px 18px; min-height:82px; }
 .sla-status-workspace>.table-scroll,.capacity-report>.table-section { margin:0; }
 .report-notes { margin:0; font-size:12px; color:var(--muted); }
 .report-notes>summary { cursor:pointer; padding:7px 0; color:var(--ink); font-weight:600; }
 .report-notes .report-context { margin:6px 0; line-height:1.5; }
-.capacity-report>.monthly-actions { margin:0; gap:10px; align-items:end; }
-.capacity-report>.monthly-actions input { width:170px; }
 .capacity-report>.table-section { padding:12px 16px; }
 .capacity-report>.table-section h2 { margin:0 0 8px; font-size:17px; }
 .sla-compare-workspace>.sla-compare-toolbar { margin:0; gap:12px; }
@@ -523,8 +520,8 @@ a.button-link { display: inline-flex; align-items: center; gap: 6px; text-decora
 .report-file-dropzone.is-dragging { border-color:var(--accent); background:var(--accent-soft); box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 20%,transparent); }
 .report-file-dropzone>span { font-size:12px; }
 @media(max-width:700px) {
-  .sla-status-workspace .sla-report-tools>.report-order-search,.capacity-report-tools>.report-order-search { width:100%; grid-template-columns:1fr; }
-  .sla-status-workspace .report-order-search>.search-input,.capacity-report-tools>.report-order-search>.search-input { grid-column:1; }
+  .sla-status-workspace .sla-report-tools>.report-order-search { width:100%; grid-template-columns:1fr; }
+  .sla-status-workspace .report-order-search>.search-input { grid-column:1; }
   .sla-status-workspace>.section-heading>.inline,.sla-compare-workspace>.section-heading>.inline { flex-wrap:wrap; }
   .report-file-dropzone { min-height:130px; padding:16px; }
 }

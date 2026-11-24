@@ -15,6 +15,7 @@ import './tableGrid.css';
 import './workspaceContext.css';
 import {OrdersWorkspace, ProductionOverview, OperationActivity, ThemeControl, VIEW_TITLES} from './StudioWorkspace';
 import ReportControls from './ReportControls';
+import TimeFields from './TimeFields';
 const CapacityReport = React.lazy(() => import('./CapacityReport'));
 const ImportExcelChanges = React.lazy(() => import('./ImportExcelChanges'));
 const ProductionReport = React.lazy(() => import('./ProductionReport'));
@@ -37,13 +38,13 @@ const DailyOrders = React.lazy(() => import('./WorkspaceViews').then(module => (
 const MonthlyOrders = React.lazy(() => import('./WorkspaceViews').then(module => ({default: module.MonthlyOrders})));
 function formatTime12(time24) {
   if (!time24) return '';
-  const [hStr, mStr] = time24.split(':');
+  const [hStr, mStr, seconds] = time24.split(':');
   let h = parseInt(hStr, 10);
   const m = mStr || '00';
   const ampm = h >= 12 ? 'PM' : 'AM';
   h = h % 12;
   if (h === 0) h = 12;
-  return `${String(h).padStart(2, '0')}:${m} ${ampm}`;
+  return `${String(h).padStart(2, '0')}:${m}${seconds?':'+seconds:''} ${ampm}`;
 }
 
 const indianDateTime = new Intl.DateTimeFormat('en-IN', {
@@ -74,8 +75,8 @@ function TriggerClock({schedule, clock, onClearHistory, clearingHistory}) {
     if(!days.includes((weekday+dayOffset)%7))continue;
     for(const time of schedule?.times||[]){
       if(dayOffset===0&&triggered.includes(time))continue;
-      const [hour,minute]=time.split(':').map(Number);
-      candidates.push(midnight+dayOffset*86400000+(hour*60+minute)*60000);
+      const [hour,minute,second=0]=time.split(':').map(Number);
+      candidates.push(midnight+dayOffset*86400000+(hour*3600+minute*60+second)*1000);
     }
   }
   const next=candidates.length?Math.min(...candidates):null;
@@ -127,7 +128,7 @@ function App() {
   const searchIndex=useMemo(()=>new WeakMap(),[]);
 
   function addTriggerTime() {
-    const t = scheduleDraft.newTime?.trim();
+    const t = scheduleDraft.newTime?.replace(/^(\d{2}:\d{2}):00$/, '$1');
     if (!t) return;
     const currentTimes = scheduleDraft.times || [];
     if (!currentTimes.includes(t)) {
@@ -449,7 +450,10 @@ function App() {
           ))}
         </div>
         <div className="schedule-add-row">
-          <label>Indian Standard Time (UTC+05:30)<input aria-label="New trigger time" type="time" value={scheduleDraft.newTime || '10:00'} onChange={e => setScheduleDraft({ ...scheduleDraft, newTime: e.target.value })}/></label>
+          <div className="schedule-time-field">
+            <span>Indian Standard Time (UTC+05:30)</span>
+            <TimeFields label="New trigger time" value={scheduleDraft.newTime} onChange={newTime=>setScheduleDraft(prev=>({...prev,newTime}))}/>
+          </div>
           <button type="button" className="add-time-btn" title="Add trigger time" onClick={addTriggerTime}><Plus size={15}/>Add</button>
         </div>
         <div className="schedule-repeat"><label htmlFor="schedule-repeat-mode">Repeat on</label><select id="schedule-repeat-mode" value={scheduleDraft.repeatMode} onChange={e=>setRepeatDays(e.target.value)}><option value="all">Every day</option><option value="weekdays">Mon–Fri</option><option value="weekends">Sat–Sun</option><option value="custom">Custom days</option></select>{scheduleDraft.repeatMode==='custom'&&<div className="schedule-day-options" aria-label="Custom schedule days">{WEEK_DAYS.map((name,day)=><label key={name}><input type="checkbox" checked={scheduleDraft.days.includes(day)} onChange={()=>toggleRepeatDay(day)}/>{name}</label>)}</div>}<small>These days apply to every scheduled time.</small></div>

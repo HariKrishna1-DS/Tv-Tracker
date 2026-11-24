@@ -705,7 +705,7 @@ def create_app(root=None, runner=None, syncer=None, start_scheduler=False, time_
                 return False
             today = now.date().isoformat()
             triggered = schedule.get('triggered_today', []) if schedule.get('last_triggered_date') == today else []
-            due = [t for t in schedule['times'] if t <= now.strftime('%H:%M') and t not in triggered]
+            due = [t for t in schedule['times'] if t <= now.strftime('%H:%M:%S') and t not in triggered]
             if not due or not begin_scheduled_capture():
                 return False
             schedule.update(last_triggered_date=today, triggered_today=triggered + due)
@@ -883,9 +883,6 @@ def create_app(root=None, runner=None, syncer=None, start_scheduler=False, time_
         body = request.get_json(silent=True)
         if not isinstance(body, dict):
             raise ValueError('An SLA update is required.')
-        mode = report_workspace.read()['mode']
-        if body.get('mode', 'tracker') != mode:
-            return jsonify(error='The report source changed. Refresh the report before editing.'), 409
         bulk = request.path.endswith('/bulk')
         orders = body.get('orders') if bulk else [body]
         if not isinstance(orders, list) or not 1 <= len(orders) <= 10000:
@@ -893,6 +890,9 @@ def create_app(root=None, runner=None, syncer=None, start_scheduler=False, time_
         status = 'Missing' if body.get('status') == 'Missed' else body.get('status')
         if status not in ('On Time', 'Missing'):
             raise ValueError('Choose On Time or Missing.')
+        mode = report_workspace.read()['mode']
+        if body.get('mode', 'tracker') != mode:
+            return jsonify(error='The report source changed. Refresh the report before editing.'), 409
         selection = {}
         for order in orders:
             if not isinstance(order, dict):
@@ -1224,9 +1224,11 @@ def create_app(root=None, runner=None, syncer=None, start_scheduler=False, time_
             if not t_str:
                 continue
             try:
-                validated_times.append(datetime.strptime(t_str, '%H:%M').strftime('%H:%M'))
+                pattern = '%H:%M:%S' if t_str.count(':') == 2 else '%H:%M'
+                parsed = datetime.strptime(t_str, pattern)
+                validated_times.append(parsed.strftime('%H:%M:%S' if parsed.second else '%H:%M'))
             except ValueError as exc:
-                raise ValueError(f'Invalid sync time: "{t_str}". Use HH:MM format.') from exc
+                raise ValueError(f'Invalid sync time: "{t_str}". Use HH:MM or HH:MM:SS format.') from exc
 
         if not validated_times:
             validated_times = ['09:00']
@@ -1249,7 +1251,8 @@ def create_app(root=None, runner=None, syncer=None, start_scheduler=False, time_
             if (changed or enabled) and now is not None:
                 already_triggered = current.get('triggered_today', []) if current.get('last_triggered_date') == now.date().isoformat() else []
                 current['last_triggered_date'] = now.date().isoformat()
-                current['triggered_today'] = sorted(set(already_triggered + [t for t in validated_times if t < now.strftime('%H:%M')]))
+                elapsed_slots = [t for t in validated_times if t < now.strftime('%H:%M:%S')[:len(t)]]
+                current['triggered_today'] = sorted(set(already_triggered + elapsed_slots))
             save_schedule(current)
         if enabled:
             schedule_tick()
@@ -1630,13 +1633,14 @@ def main():
     default_port = int(os.environ.get('PORT', 8510))
     parser.add_argument('--host', type=str, default=default_host)
     parser.add_argument('--port', type=int, default=default_port)
+    parser.add_argument('--strict-port', action='store_true', help='Use the requested port without trying nearby ports.')
     parser.add_argument('--open-browser', action='store_true',
                         help='Open the workspace in the system browser after the server starts.')
     args = parser.parse_args()
     from waitress import create_server
     host = args.host
     port = args.port
-    if host == '127.0.0.1':
+    if host == '127.0.0.1' and not args.strict_port:
         while port < args.port + 20:
             with socket.socket() as probe:
                 try:

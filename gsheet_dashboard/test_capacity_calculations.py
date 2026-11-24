@@ -47,6 +47,8 @@ class CapacityCalculationTests(unittest.TestCase):
         from test_pdf_report_workspace import excel
         rows=[dict(order('REPEATED','Completed and Delivered',received='10/22/2026',completed='10/23/2026'),Date='10/22/2026'),
               dict(order('REPEATED',received='10/22/2026'),Date='10/22/2026')]
+        rows[0]['S.No'] = '0671'
+        rows[1]['S.No'] = '1669'
         imported=read_report_files([('full.xlsx',excel(rows))])
         with tempfile.TemporaryDirectory() as folder:
             workspace=ReportWorkspace(PreviewStore(Path(folder)/'previews'))
@@ -61,6 +63,8 @@ class CapacityCalculationTests(unittest.TestCase):
                              [('2026-10-22',2,0),('2026-10-23',0,1)])
             search=client.get('/api/report-order-search?scope=capacity&search=REPEATED').json
             self.assertEqual(search['total'],2)
+            self.assertEqual({row['Status']: row['No'] for row in search['rows']},
+                             {'Completed and Delivered':'0671', 'QC in Progress':'1669'})
             details=client.get('/api/capacity-report/details?date=2026-10-23').json
             self.assertEqual(details['mode'],'excel')
             self.assertEqual(details['counts']['Received'],0)

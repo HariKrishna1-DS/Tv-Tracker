@@ -1,6 +1,6 @@
 {
   "name": "tv-tracker",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "description": "Private desktop workspace for title production and Google Sheets synchronization",
   "author": "Tv Tracker",
   "private": true,
@@ -75,7 +75,7 @@
       {
         "provider": "github",
         "owner": "HariKrishna1-DS",
-        "repo": "powerBI_Sync",
+        "repo": "Tv-Tracker",
         "releaseType": "release"
       }
     ]

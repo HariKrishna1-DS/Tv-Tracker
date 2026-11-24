@@ -1,4 +1,4 @@
-# Tv Tracker 2.0.3 — Windows desktop
+# Tv Tracker 2.0.4 — Windows desktop
 
 Tv Tracker is a local desktop workspace for TitleVision extraction, Google Sheets production tracking, saved captures, comparisons, and Power BI exports. Its Python and Node runtimes are bundled. No Render hosting or PostgreSQL service is required.
 

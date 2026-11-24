@@ -90,9 +90,31 @@ body { background:var(--canvas); color:var(--text); }
 .workspace :is(.monthly-actions,.compare-controls,.filter-toolbar,.order-tools) { display:flex; align-items:center; flex-wrap:wrap; gap:12px; }
 .workspace :is(.compare-controls,.filter-toolbar) { background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card); padding:16px; margin:20px 0; }
 .workspace .monthly-actions { margin:0; padding:0; background:transparent; border:0; }
-.workspace .capacity-report>.monthly-actions { padding:18px 20px; border:1px solid var(--line); border-radius:var(--radius-card); background:var(--surface); margin-bottom:20px; align-items:flex-end; }
+.workspace .capacity-report>.report-order-search { margin:0 0 20px; }
+.workspace .capacity-toolbar {
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(0,300px) minmax(0,1fr);
+  align-items:end;
+  gap:16px;
+  padding:18px 20px;
+  border:1px solid var(--line);
+  border-radius:var(--radius-card);
+  background:var(--surface);
+}
+.workspace .capacity-toolbar>.monthly-actions { gap:10px; align-items:flex-end; }
+.capacity-toolbar .monthly-actions label { flex:1 1 115px; min-width:0; max-width:170px; }
+.capacity-toolbar .monthly-actions button { white-space:nowrap; }
+.capacity-toolbar .monthly-actions input { width:170px; max-width:100%; }
+.capacity-order-field { min-width:0; width:100%; max-width:300px; }
+.capacity-order-field>.report-order-search-label { margin:0 0 7px; font-size:12px; font-weight:600; }
+.capacity-order-field>.search-input { min-height:38px; }
+@media(max-width:1050px) {
+  .workspace .capacity-toolbar { display:flex; flex-wrap:wrap; }
+  .capacity-toolbar>.monthly-actions { min-width:0; }
+  .capacity-order-field { margin-inline:auto; }
+}
 .workspace :is(.monthly-actions,.compare-controls)>label { display:flex; align-items:center; gap:10px; color:var(--text); font-size:12px; font-weight:600; }
-.workspace .capacity-report>.monthly-actions>label { flex-direction:column; align-items:flex-start; gap:7px; }
+.workspace .capacity-toolbar>.monthly-actions>label { flex-direction:column; align-items:flex-start; gap:7px; }
 .workspace .sla-preview-picker { display:flex; flex-wrap:wrap; align-items:center; gap:12px; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-control); padding:12px 16px; margin:0 0 20px; color:var(--text); }
 .workspace .sla-preview-picker select { background:var(--surface-subtle); border:1px solid var(--line); }
 .workspace :is(.studio-section,.status-report,.daily-chart,.dashboard-card,.orders-main,.order-inspector,.status-transitions-bar) { background:var(--surface); border:1px solid var(--line); border-radius:var(--radius-card); box-shadow:var(--card-shadow); }

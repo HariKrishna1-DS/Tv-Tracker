@@ -23,6 +23,8 @@ from indian_clock import IST
 from portal_time import PORTAL_TIMEZONE, capture_time
 
 LOCK = threading.Lock()
+EXACT_OUT_TIME_FORMAT = 'yyyy-mm-dd hh:mm:ss'
+SERIAL_NUMBER_HEADERS = {'no', 'sno', 'serialno', 'serialnumber'}
 GOOGLE_COLUMNS = ['No', 'Date', 'Order Number', 'TraceQ Id', 'State', 'County', 'Client',
     'Online/Ground', 'Product', 'Status', 'ETA', 'Comments', 'Assignee', 'Searcher',
     'Clarification Requested', 'Shift', 'Process date', 'Review/QC', 'Expense',
@@ -112,8 +114,8 @@ def discover(folder):
     return {kind: files[0] for kind, files in found.items()}
 
 
-def template(path):
-    book = load_workbook(path)
+def template(path, *, data_only=False):
+    book = load_workbook(path, data_only=data_only)
     matches = []
     for sheet in book:
         for r in range(1, min(sheet.max_row, 15) + 1):
@@ -134,6 +136,27 @@ def template(path):
     return book, sheet, header_row, headers, existing, products
 
 
+def production_serial_numbers(folder, order_keys):
+    serials = {}
+    for path in discover(folder).values():
+        book, sheet, header_row, headers, _, _ = template(path, data_only=True)
+        try:
+            order_column = next(i for i, header in enumerate(headers) if norm(header) == 'ordernumber')
+            serial_column = next((i for i, header in enumerate(headers)
+                                  if norm(header) in SERIAL_NUMBER_HEADERS), None)
+            for row in sheet.iter_rows(min_row=header_row + 1, values_only=True):
+                key = number(row[order_column])
+                if key not in order_keys:
+                    continue
+                matches = serials.setdefault(key, {})
+                serial = row[serial_column] if serial_column is not None else None
+                if serial is not None and str(serial).strip():
+                    matches[str(serial).strip()] = None
+        finally:
+            book.close()
+    return {key: ', '.join(values) for key, values in serials.items()}
+
+
 def read_completion_report(data, excluded_orders=None, record_timestamp=None):
     """Read absolute completion timestamps; conflicting duplicates are excluded."""
     book = load_workbook(BytesIO(data), read_only=True, data_only=True)
@@ -145,6 +168,7 @@ def read_completion_report(data, excluded_orders=None, record_timestamp=None):
                 headers = [norm(value) for value in row]
                 if 'ordernumber' in headers and 'completedtimehours' in headers:
                     oi, ti = headers.index('ordernumber'), headers.index('completedtimehours')
+                    pi = headers.index('product') if 'product' in headers else None
                     found = True
                     break
                 if index >= 14: break
@@ -157,8 +181,12 @@ def read_completion_report(data, excluded_orders=None, record_timestamp=None):
                 value = capture_time(raw) if isinstance(raw, (str, datetime)) else None
                 if not key or value is None: continue
                 value = value.isoformat()
+                prod = str(row[pi]).strip() if (pi is not None and pi < len(row) and row[pi] is not None) else ''
                 if record_timestamp is not None:
-                    record_timestamp(key, str(row[oi]).strip(), value)
+                    try:
+                        record_timestamp(key, str(row[oi]).strip(), value, prod)
+                    except TypeError:
+                        record_timestamp(key, str(row[oi]).strip(), value)
                 if key in values and values[key] != value: conflicts.add(key)
                 values[key] = value
         if not found: raise ValueError('Upload an ExcelReport with Order Number and Completed Time (hours) columns.')
@@ -169,8 +197,10 @@ def read_completion_report(data, excluded_orders=None, record_timestamp=None):
         book.close()
 
 
-def plan(folder, report, routes=None, comparison_rows=None, status_overrides=None, completion_times=None, export_options=None):
+def plan(folder, report, routes=None, comparison_rows=None, status_overrides=None, completion_times=None,
+         export_options=None, *, product_completion_times=None):
     from monthly_production import local_datetime
+    exact_times = {key: local_datetime(value) for key, value in (completion_times or {}).items()}
     options = dict(new_orders=True, status_changes=True, completion_times=True, completed_tv=False)
     if export_options is not None:
         if not isinstance(export_options, dict) or any(key not in options or type(value) is not bool for key, value in export_options.items()):
@@ -183,6 +213,7 @@ def plan(folder, report, routes=None, comparison_rows=None, status_overrides=Non
     for kind, path in files.items():
         book, sheet, hr, headers, existing, products = template(path)
         order_index=next(i for i,h in enumerate(headers) if norm(h)=='ordernumber')
+        product_index=next(i for i,h in enumerate(headers) if norm(h)=='product')
         status_index=next(i for i,h in enumerate(headers) if norm(h)=='status')
         protected={number(row[order_index]) for row in sheet.iter_rows(min_row=hr+1,values_only=True)
                    if row[order_index] and protected_status(row[status_index])}
@@ -194,33 +225,37 @@ def plan(folder, report, routes=None, comparison_rows=None, status_overrides=Non
         if completion_times is not None and out_index is None and options['completion_times']:
             raise ValueError(f'{path.name}: Out Time column is required for completion updates.')
         if out_index is not None:
+            info[kind]['exact_times'] = {}
             for r in range(hr+1, sheet.max_row+1):
                 identity = sheet.cell(r,order_index+1).value
                 previous_status = sheet.cell(r,status_index+1).value
                 if not identity: continue
-                current = sheet.cell(r,out_index+1).value
+                cell = sheet.cell(r,out_index+1)
+                current = cell.value
+                key = number(identity)
+                product_times = (product_completion_times or {}).get(key, {})
+                product_time = product_times.get(norm(sheet.cell(r, product_index+1).value))
+                exact = local_datetime(product_time) if product_time else exact_times.get(key)
                 if not completed_status(previous_status):
-                    uploaded = friday_completion((completion_times or {}).get(number(identity)))
-                    if uploaded:
+                    if exact:
                         tv_updates.append({'row':r,'Order Number':str(identity),
                             'PreviousStatus':str(previous_status or ''), 'Status':'Completed and Delivered',
-                            'Previous Out Time':out_time_text(current),
-                            'Out Time':((friday_completion(current) or uploaded).isoformat()
-                                if not out_time_text(current).strip() or friday_completion(current)
-                                else out_time_text(current))})
+                            'Previous Out Time':out_time_text(current), 'Out Time':exact.isoformat()})
                     continue
-                if current is not None and str(current).strip():
-                    adjusted = friday_completion(current)
+                if exact:
+                    if current != exact or cell.number_format != EXACT_OUT_TIME_FORMAT:
+                        times.append({'row':r,'Order Number':str(identity), 'exact_out_time':True,
+                                      'Previous Out Time':out_time_text(current), 'Out Time':exact.isoformat()})
+                    else:
+                        kept += 1
+                elif current is not None and str(current).strip():
+                    # Keep exact timestamps written by a previous completion upload.
+                    adjusted = None if cell.number_format == EXACT_OUT_TIME_FORMAT else friday_completion(current)
                     if adjusted and adjusted != local_datetime(current):
                         times.append({'row':r,'Order Number':str(identity),
                                       'Previous Out Time':out_time_text(current), 'Out Time':adjusted.isoformat()})
                     else:
                         kept += 1
-                elif number(identity) in (completion_times or {}):
-                    adjusted = friday_completion(completion_times[number(identity)])
-                    if adjusted:
-                        times.append({'row':r,'Order Number':str(identity),'Out Time':adjusted.isoformat()})
-                    else: unmatched += 1
                 else: unmatched += 1
         if out_index is None and options['completed_tv'] and completion_times:
             raise ValueError(f'{path.name}: Out Time column is required for Completed in TV updates.')
@@ -276,6 +311,8 @@ def plan(folder, report, routes=None, comparison_rows=None, status_overrides=Non
             continue
         # An existing order in either report is retained and never duplicated.
         info[kind]['additions'].append(row)
+        if exact_times.get(key) and 'exact_times' in info[kind]:
+            info[kind]['exact_times'][key] = exact_times[key].isoformat()
         preview.append(dict(row, Destination=files[kind].name))
     if status_overrides is not None and not isinstance(status_overrides,dict):
         raise ValueError('Invalid planned status selections.')
@@ -304,12 +341,14 @@ def plan(folder, report, routes=None, comparison_rows=None, status_overrides=Non
         if not options['status_changes']: item['changes'] = []
         if not options['completion_times']: item['completion_updates'] = []
         if not options['completed_tv']: item['completed_tv_updates'] = []
+        if not (options['new_orders'] and options['completion_times']): item.pop('exact_times', None)
     if not options['new_orders']: unresolved.clear()
     payload = {'export_options': options, 'preview_id': report.get('preview_id'), 'rows': preview,
                'files': {k: v['sha256'] for k,v in info.items()}, 'routes': routes or {},
                'changes': {k:v['changes'] for k,v in info.items()}, 'status_overrides':status_overrides or {},
                'completion_updates':{k:v['completion_updates'] for k,v in info.items()}}
     payload['completed_tv_updates'] = {k:v['completed_tv_updates'] for k,v in info.items()}
+    payload['exact_times'] = {k:v['exact_times'] for k,v in info.items() if v.get('exact_times')}
     fingerprint = sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
     return info, dict(fingerprint=fingerprint, preview_id=report.get('preview_id'),
         preview_name=report.get('preview_name'), columns=GOOGLE_COLUMNS,
@@ -360,7 +399,7 @@ def extend_status_formatting(sheet, header_row, headers, end_row):
     sheet.conditional_formatting=updated
 
 
-def append_rows(path, rows, changes=None, completion_updates=None, completed_tv_updates=None):
+def append_rows(path, rows, changes=None, completion_updates=None, completed_tv_updates=None, *, exact_times=None):
     book, sheet, hr, headers, _, _ = template(path)
     status_col = next(i+1 for i,h in enumerate(headers) if norm(h)=='status')
     updates = {number(row['Order Number']):row['Status'] for row in (changes or [])}
@@ -374,7 +413,8 @@ def append_rows(path, rows, changes=None, completion_updates=None, completed_tv_
         if out_time_text(cell.value).strip() != update.get('Previous Out Time', '').strip():
             raise ValueError('An Out Time changed since checking. Check the folder again.')
         cell.value = datetime.fromisoformat(update['Out Time'])
-        if not is_date_format(cell.number_format): cell.number_format = 'mm/dd/yyyy hh:mm:ss AM/PM'
+        if update.get('exact_out_time'): cell.number_format = EXACT_OUT_TIME_FORMAT
+        elif not is_date_format(cell.number_format): cell.number_format = 'mm/dd/yyyy hh:mm:ss AM/PM'
     # Recheck the actual workbook at write time, independently of the saved comparison.
     for update in completed_tv_updates or []:
         r = update['row']
@@ -384,12 +424,8 @@ def append_rows(path, rows, changes=None, completion_updates=None, completed_tv_
             raise ValueError('A Completed in TV order changed. Check the folder again.')
         sheet.cell(r,status_col).value = 'Completed and Delivered'
         cell = sheet.cell(r,out_col)
-        # Preserve an existing nonblank date unless it is a weekend date.
-        adjusted = friday_completion(cell.value)
-        from monthly_production import local_datetime
-        if not out_time_text(cell.value).strip() or (adjusted and adjusted != local_datetime(cell.value)):
-            cell.value = datetime.fromisoformat(update['Out Time'])
-            if not is_date_format(cell.number_format): cell.number_format = 'dd-mm-yyyy hh:mm:ss'
+        cell.value = datetime.fromisoformat(update['Out Time'])
+        cell.number_format = EXACT_OUT_TIME_FORMAT
     protected={number(sheet.cell(r,order_col).value) for r in range(hr+1,sheet.max_row+1)
                if protected_status(sheet.cell(r,status_col).value)}
     for existing_row in range(hr+1, sheet.max_row+1):
@@ -411,6 +447,7 @@ def append_rows(path, rows, changes=None, completion_updates=None, completed_tv_
     for offset, source in enumerate(rows):
         r = start+offset
         occurrences = Counter()
+        exact = (exact_times or {}).get(number(source['Order Number']))
         for col, header in enumerate(headers,1):
             cell = sheet.cell(r,col)
             previous = sheet.cell(last,col)
@@ -437,7 +474,10 @@ def append_rows(path, rows, changes=None, completion_updates=None, completed_tv_
                 if parsed_date is not None:
                     value=parsed_date
                     if not is_date_format(cell.number_format): cell.number_format='dd-mm-yyyy'
-            if norm(header)=='outtime' and completed_status(source.get('Status')) and value not in (None,''):
+            if col == out_col and exact:
+                value = datetime.fromisoformat(exact)
+                cell.number_format = EXACT_OUT_TIME_FORMAT
+            elif norm(header)=='outtime' and completed_status(source.get('Status')) and value not in (None,''):
                 adjusted=friday_completion(value)
                 if adjusted is not None:
                     value=adjusted
@@ -478,7 +518,8 @@ def proceed(info, output, export_options=None):
             completions = item.get('completion_updates') if options.get('completion_times') is True else []
             tv_updates = item.get('completed_tv_updates') if options.get('completed_tv') is True else []
             changed = additions or changes or completions or tv_updates
-            data=append_rows(path,additions,changes,completions,tv_updates) if changed else path.read_bytes()
+            exact_times = item.get('exact_times') if options.get('completion_times') is True else None
+            data=append_rows(path,additions,changes,completions,tv_updates,exact_times=exact_times) if changed else path.read_bytes()
             (output/path.name).write_bytes(data)
             if changed:
                 temporary=path.with_name('.tv-tracker-'+uuid4().hex+'.xlsx')
@@ -583,10 +624,16 @@ def register_production_export(app, workspace, load_report, refresh_workbooks=No
         try:
             times, excluded, names, total_bytes = {}, set(), [], 0
             candidates, order_numbers = {}, {}
+            candidate_products = {}
+            order_products = {}
 
-            def record_timestamp(key, order_number, value):
+            def record_timestamp(key, order_number, value, product=''):
                 order_numbers.setdefault(key, order_number)
                 candidates.setdefault(key, {}).setdefault(value, set()).add(names[-1])
+                if product:
+                    candidate_products.setdefault(key, {})[value] = product
+                    if product not in order_products.setdefault(key, []):
+                        order_products[key].append(product)
 
             for upload in uploads:
                 data = upload.read(20*1024*1024+1)
@@ -600,7 +647,6 @@ def register_production_export(app, workspace, load_report, refresh_workbooks=No
                         excluded.add(key)
                     times[key] = value
             # Store Indian wall time for the timezone-free Excel Out Time cells.
-            # Do this before the production plan applies its weekend rule.
             times = {
                 key: datetime.fromisoformat(value).replace(tzinfo=PORTAL_TIMEZONE)
                 .astimezone(IST).replace(tzinfo=None).isoformat()
@@ -610,21 +656,180 @@ def register_production_export(app, workspace, load_report, refresh_workbooks=No
             directory = exports/'completion-uploads'
             directory.mkdir(parents=True,exist_ok=True)
             (directory/(token+'.json')).write_text(json.dumps(times))
+            details = {
+                'times': times,
+                'candidates': {key: {v: list(f) for v, f in cand.items()} for key, cand in candidates.items()},
+                'candidate_products': candidate_products,
+                'order_products': order_products,
+                'order_numbers': order_numbers,
+                'excluded': sorted(excluded),
+                'names': names
+            }
+            (directory/(token+'_details.json')).write_text(json.dumps(details))
             completion_rows = [
-                {'Order Number': order_numbers[key], 'Completion time (IST)': value.replace('T', ' '),
-                 'Source files': ', '.join(sorted(next(iter(candidates[key].values()))))}
+                {
+                    'Order Number': order_numbers[key],
+                    'Product': ', '.join(order_products.get(key, [])) or '—',
+                    'Completion time (IST)': value.replace('T', ' '),
+                    'Source files': ', '.join(sorted(next(iter(candidates[key].values()))))
+                }
                 for key, value in times.items()
             ]
             conflict_rows = [
-                {'Order Number': order_numbers[key], 'Reported times (U.S. Central)': '\n'.join(
-                    f"{value.replace('T', ' ')} ({', '.join(sorted(files))})"
-                    for value, files in sorted(candidates[key].items()))}
+                {
+                    'Order Number': order_numbers[key],
+                    'Products': ', '.join(order_products.get(key, [])) or '—',
+                    'Reported times (U.S. Central)': '\n'.join(
+                        f"{value.replace('T', ' ')} ({', '.join(sorted(files))})"
+                        for value, files in sorted(candidates[key].items())),
+                    'times_count': len(candidates[key]),
+                    'days_count': len({value[:10] for value in candidates[key]}),
+                    'candidates': [
+                        {
+                            'time_central': value.replace('T', ' '),
+                            'time_ist': datetime.fromisoformat(value).replace(tzinfo=PORTAL_TIMEZONE)
+                                .astimezone(IST).replace(tzinfo=None).strftime('%Y-%m-%d %H:%M:%S'),
+                            'files': sorted(files),
+                            'files_str': ', '.join(sorted(files)),
+                            'product': candidate_products.get(key, {}).get(value) or (order_products.get(key, [''])[0] if order_products.get(key) else '') or '—',
+                            'display': f"{value.replace('T', ' ')} ({', '.join(sorted(files))})"
+                        }
+                        for value, files in sorted(candidates[key].items())
+                    ]
+                }
                 for key in sorted(excluded)
             ]
             return jsonify(token=token,name=', '.join(names),names=names,files=len(names),orders=len(times),
                            conflicts=len(excluded),completion_rows=completion_rows,conflict_rows=conflict_rows)
         except Exception:
             return jsonify(error='Could not read the completion report. Use a valid .xlsx file with Order Number and Completed Time (hours) columns.'),400
+
+    @app.post('/api/production-report/resolve-conflicts-version')
+    @app.post('/api/production-report/resolve-product-conflicts')
+    @app.post('/api/production-report/resolve-conflicts')
+    def resolve_conflicts():
+        body = request.get_json(silent=True) or {}
+        token = body.get('token')
+        resolutions = body.get('resolutions') or []
+        if not isinstance(token, str) or not re.fullmatch('[a-f0-9]{32}', token):
+            return jsonify(error='Invalid completion upload token.'), 400
+        if not isinstance(resolutions, list) or not resolutions:
+            return jsonify(error='No conflict resolutions provided.'), 400
+
+        directory = exports/'completion-uploads'
+        source = directory/(token+'.json')
+        if not source.is_file():
+            return jsonify(error='Upload session expired. Please upload the ExcelReports again.'), 404
+
+        # Versioned moves preserve the input token so undo can reuse it for export.
+        versioned = not request.path.endswith('/resolve-conflicts')
+        next_token = uuid4().hex if versioned else token
+        target = directory/(next_token+'.json')
+        target_details = directory/(next_token+'_details.json')
+
+        try:
+            details_file = directory/(token+'_details.json')
+            details = json.loads(details_file.read_text()) if details_file.is_file() else {}
+            times = json.loads(source.read_text())
+            order_numbers = details.get('order_numbers', {})
+            candidates = details.get('candidates', {})
+            candidate_products = details.get('candidate_products', {})
+            order_products = details.get('order_products', {})
+            excluded = set(details.get('excluded', []))
+
+            resolved_sources = details.get('resolved_sources', {})
+            product_times = details.get('product_times', {})
+            for res in resolutions:
+                order_num = str(res.get('order_number') or '').strip()
+                key = number(order_num)
+                time_ist = str(res.get('time_ist') or '').strip()
+                source_file = res.get('source_file')
+                if not key or not time_ist:
+                    continue
+
+                order_numbers[key] = order_num
+                iso_ist = time_ist.replace(' ', 'T')
+                central_time = str(res.get('time_central') or '').replace(' ', 'T')
+                files = candidates.get(key, {}).get(central_time)
+                if 'product' in res:
+                    product = norm(res['product'])
+                    expected = candidate_products.get(key, {}).get(central_time)
+                    if not product or product != norm(expected):
+                        return jsonify(error='Select a product with a matching reported completion time.'), 400
+                    product_times.setdefault(key, {})[product] = iso_ist
+                    times.pop(key, None)
+                    resolved_sources[key] = sorted(set(resolved_sources.get(key, ())) | set(files or ()))
+                else:
+                    times[key] = iso_ist
+                    product_times.pop(key, None)
+                    if files or source_file:
+                        resolved_sources[key] = files or [source_file]
+                excluded.discard(key)
+
+            details['times'] = times
+            details['order_numbers'] = order_numbers
+            details['candidates'] = candidates
+            details['excluded'] = sorted(excluded)
+            details['resolved_sources'] = resolved_sources
+            details['product_times'] = product_times
+
+            displayed_times = {key: value.replace('T', ' ') for key, value in times.items()}
+            for key, values in product_times.items():
+                labels = {norm(product): product for product in order_products.get(key, [])}
+                displayed_times[key] = '\n'.join(f'{labels.get(product, product)}: {value.replace("T", " ")}'
+                                                  for product, value in values.items())
+
+            completion_rows = [
+                {
+                    'Order Number': order_numbers.get(key, key),
+                    'Product': ', '.join(order_products.get(key, [])) if isinstance(order_products.get(key), list) else str(order_products.get(key) or '—'),
+                    'Completion time (IST)': value,
+                    'Source files': ', '.join(sorted(resolved_sources.get(key) or next(iter(candidates.get(key, {}).values()), ['ExcelReport.xlsx'])))
+                }
+                for key, value in displayed_times.items()
+            ]
+            conflict_rows = [
+                {
+                    'Order Number': order_numbers.get(key, key),
+                    'Products': ', '.join(order_products.get(key, [])) if isinstance(order_products.get(key), list) else str(order_products.get(key) or '—'),
+                    'Reported times (U.S. Central)': '\n'.join(
+                        f"{val.replace('T', ' ')} ({', '.join(sorted(files))})"
+                        for val, files in sorted(candidates.get(key, {}).items())
+                    ),
+                    'times_count': len(candidates.get(key, {})),
+                    'days_count': len({val[:10] for val in candidates.get(key, {})}),
+                    'candidates': [
+                        {
+                            'time_central': val.replace('T', ' '),
+                            'time_ist': datetime.fromisoformat(val).replace(tzinfo=PORTAL_TIMEZONE)
+                                .astimezone(IST).replace(tzinfo=None).strftime('%Y-%m-%d %H:%M:%S'),
+                            'files': sorted(files),
+                            'files_str': ', '.join(sorted(files)),
+                            'product': candidate_products.get(key, {}).get(val) or (order_products.get(key, [''])[0] if isinstance(order_products.get(key), list) and order_products.get(key) else str(order_products.get(key) or '—')),
+                            'display': f"{val.replace('T', ' ')} ({', '.join(sorted(files))})"
+                        }
+                        for val, files in sorted(candidates.get(key, {}).items())
+                    ]
+                }
+                for key in sorted(excluded)
+            ]
+
+            target_details.write_text(json.dumps(details))
+            target.write_text(json.dumps(times))
+            return jsonify(
+                success=True,
+                token=next_token,
+                orders=len(completion_rows),
+                conflicts=len(excluded),
+                completion_rows=completion_rows,
+                conflict_rows=conflict_rows
+            )
+        except Exception:
+            if versioned:
+                target.unlink(missing_ok=True)
+                target_details.unlink(missing_ok=True)
+            app.logger.exception('Could not resolve conflicts')
+            return jsonify(error='Could not update conflicting orders.'), 500
 
     @app.get('/api/production-report')
     def production_config():
@@ -633,8 +838,28 @@ def register_production_export(app, workspace, load_report, refresh_workbooks=No
                        selected_preview_id=settings.get('sla_preview_id'),
                        revert=revert_available(settings.get('production_report_folder',''),exports))
 
+    @app.post('/api/production-report/completion-serials')
+    def completion_serials():
+        body = request.get_json(silent=True) or {}
+        token = body.get('token')
+        if not isinstance(token, str) or not re.fullmatch('[a-f0-9]{32}', token):
+            return jsonify(error='Invalid completion upload token.'), 400
+        details_file = exports/'completion-uploads'/(token+'_details.json')
+        if not details_file.is_file():
+            return jsonify(error='Upload the ExcelReports again to look up production S.No values.'), 404
+        try:
+            details = json.loads(details_file.read_text())
+            return jsonify(serials=production_serial_numbers(body.get('folder', ''), details.get('order_numbers', {})))
+        except ValueError as error:
+            return jsonify(error=str(error)), 400
+        except Exception:
+            app.logger.exception('Could not read production serial numbers')
+            return jsonify(error='Could not read S.No values from the production workbooks.'), 400
+
     @app.post('/api/production-report/<action>')
     def production_action(action):
+        if action == 'resolve-conflicts':
+            return resolve_conflicts()
         if action not in ('check','proceed','revert'): return jsonify(error='Unknown action'),404
         body=request.get_json(silent=True) or {}
         try:
@@ -653,6 +878,7 @@ def register_production_export(app, workspace, load_report, refresh_workbooks=No
                 report=load_report(preview_id)
                 saved_comparison=workspace.read().get('sla_comparison_report') or {}
                 completion_times = None
+                product_completion_times = {}
                 if body.get('completion_token'):
                     token = body['completion_token']
                     if not isinstance(token,str) or not re.fullmatch('[a-f0-9]{32}',token):
@@ -660,7 +886,10 @@ def register_production_export(app, workspace, load_report, refresh_workbooks=No
                     source = exports/'completion-uploads'/(token+'.json')
                     if not source.is_file(): raise ValueError('Upload the completion report again.')
                     completion_times = json.loads(source.read_text())
-                info,result=plan(body.get('folder',''),report,body.get('routes'), saved_comparison.get('rows') or None, body.get('status_overrides'), completion_times, body.get('export_options'))
+                    details_file = source.with_name(token+'_details.json')
+                    if details_file.is_file():
+                        product_completion_times = json.loads(details_file.read_text()).get('product_times', {})
+                info,result=plan(body.get('folder',''),report,body.get('routes'), saved_comparison.get('rows') or None, body.get('status_overrides'), completion_times, body.get('export_options'), product_completion_times=product_completion_times)
                 if action=='proceed':
                     if result['unresolved']: raise ValueError('Choose destinations for all unfamiliar products, then check again.')
                     if body.get('fingerprint')!=result['fingerprint']:

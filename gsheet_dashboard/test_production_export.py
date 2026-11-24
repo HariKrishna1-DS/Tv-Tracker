@@ -40,6 +40,23 @@ class ProductionExportTests(unittest.TestCase):
         self.assertEqual(book.active.cell(2,8).value,'SearchFix')
         book.close()
 
+    def test_product_conflict_times_update_each_matching_workbook_row(self):
+        for path in self.files.values():
+            book = load_workbook(path)
+            book.active.cell(1, 14, 'Out Time')
+            book.active.cell(2, 3, 'shared-order')
+            book.save(path)
+            book.close()
+        options = {'new_orders': False, 'status_changes': False, 'completion_times': True}
+        times = {'shared-order': {'fulltitle': '2026-11-14T02:53:35', 'update': '2026-11-13T17:25:11'}}
+        info, _ = plan(self.root, self.report, comparison_rows=[], completion_times={},
+                       export_options=options, product_completion_times=times)
+        proceed(info, self.root/'product-conflict-export', options)
+        for kind, timestamp in [('full', '2026-11-14T02:53:35'), ('co', '2026-11-13T17:25:11')]:
+            book = load_workbook(self.files[kind])
+            self.assertEqual(book.active.cell(2, 14).value, datetime.fromisoformat(timestamp))
+            book.close()
+
     def test_export_switches_apply_only_enabled_categories_and_leave_others_for_later(self):
         for kind,path in self.files.items():
             book=load_workbook(path)
@@ -149,7 +166,7 @@ class ProductionExportTests(unittest.TestCase):
         for kind,path in self.files.items():
             book=load_workbook(path);sheet=book.active
             self.assertEqual(sheet.cell(2,8).value,'Completed and Delivered')
-            self.assertEqual(sheet.cell(2,14).value,datetime(2026,11,6,8,30) if kind=='full' else datetime(2026,11,6,15,45))
+            self.assertEqual(sheet.cell(2,14).value,datetime(2026,11,7,8,30) if kind=='full' else datetime(2026,11,8,15,45))
             self.assertEqual(sheet.cell(3,8).value,'Search In Progress')
             self.assertEqual(sheet.max_row,3)
             book.close()
@@ -177,13 +194,13 @@ class ProductionExportTests(unittest.TestCase):
         self.assertEqual(book.active.cell(2,14).value,datetime(2026,11,5,10));book.close()
         options['completed_tv']=True
         info,_=plan(self.root,self.report,completion_times=times,export_options=options)
-        self.assertEqual(info['full']['completed_tv_updates'][0]['Out Time'],'2026-11-05T10:00:00')
+        self.assertEqual(info['full']['completed_tv_updates'][0]['Out Time'],'2026-11-07T08:30:00')
         proceed(info,self.root/'tv-enabled',options)
         book=load_workbook(path)
         self.assertEqual(book.active.cell(2,8).value,'Completed and Delivered')
-        self.assertEqual(book.active.cell(2,14).value,datetime(2026,11,5,10));book.close()
+        self.assertEqual(book.active.cell(2,14).value,datetime(2026,11,7,8,30));book.close()
 
-    def test_weekend_completion_sync_corrects_existing_and_uploaded_dates_and_capacity(self):
+    def test_weekend_upload_dates_are_exact_and_legacy_dates_are_corrected(self):
         from report_workspace import read_report_files, imported_snapshot, capacity_report
         from production_export import revert_checkpoint, revert_excel
         for kind,path in self.files.items():
@@ -201,10 +218,11 @@ class ProductionExportTests(unittest.TestCase):
         proceed(info,output)
         for kind,path in self.files.items():
             book=load_workbook(path)
-            self.assertEqual(book.active.cell(2,14).value,datetime(2026,11,6,17,23,41) if kind=='full' else datetime(2026,11,6))
+            self.assertEqual(book.active.cell(2,14).value,datetime(2026,11,8,17,23,41) if kind=='full' else datetime(2026,11,6))
             book.close()
         imported=read_report_files([(p.name,p.read_bytes()) for p in self.files.values()])
         report=capacity_report(imported_snapshot(imported)['reports'],{'mode':'excel','capacity_month':'2026-11'})
+        # Capacity Report still groups weekend completions under Friday.
         self.assertEqual([(r['Date'],r['Completed']) for r in report['daily'] if r['Completed']],[('2026-11-06',2)])
         _,again=plan(self.root,self.report,completion_times={},export_options=options)
         self.assertEqual(sum(r['completion_count'] for r in again['reports']),0)
@@ -244,7 +262,7 @@ class ProductionExportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'Out Time changed'):
             append_rows(path,[],completion_updates=updates)
 
-    def test_completion_times_fill_only_blank_completed_rows_and_revert(self):
+    def test_completion_times_update_matched_completed_rows_and_revert(self):
         from production_export import revert_checkpoint,revert_excel
         for kind,path in self.files.items():
             book=load_workbook(path);sheet=book.active
@@ -256,14 +274,14 @@ class ProductionExportTests(unittest.TestCase):
         times={'full-old':'2026-11-11T06:19:29','co-old':'2026-11-11T06:19:29','active':'2026-11-11T06:19:29'}
         info,result=plan(self.root,self.report,completion_times=times)
         self.assertEqual(info['full']['completion_updates'][0]['Order Number'],'full-old')
-        self.assertEqual(info['co']['completion_kept'],1)
+        self.assertEqual(info['co']['completion_updates'][0]['Order Number'],'co-old')
         _,without=plan(self.root,self.report)
         self.assertNotEqual(result['fingerprint'],without['fingerprint'])
         output=self.root/'exports'/('a'*32)
         proceed(info,output)
         for kind,path in self.files.items():
             book=load_workbook(path);sheet=book.active
-            self.assertEqual(sheet.cell(2,14).value,datetime(2026,11,11,6,19,29) if kind=='full' else '12-11-2026')
+            self.assertEqual(sheet.cell(2,14).value,datetime(2026,11,11,6,19,29))
             self.assertIsNone(sheet.cell(3,14).value)
             book.close()
         (output/'files.json').write_text(__import__('json').dumps({k:p.name for k,p in self.files.items()}))
@@ -610,6 +628,73 @@ class ProductionExportTests(unittest.TestCase):
         self.assertEqual(reverted.status_code,200,reverted.json)
         restored=client.get('/api/capacity-report/details?month=2026-11&aggregate=true').json
         self.assertEqual(restored['counts']['Completed'],0)
+
+    def test_proceed_writes_exact_uploaded_and_resolved_out_times_in_both_workbooks(self):
+        from flask import Flask
+        from types import SimpleNamespace
+        from production_export import register_production_export
+
+        for kind, path in self.files.items():
+            book = load_workbook(path)
+            sheet = book.active
+            sheet.cell(1, 14, 'Out Time')
+            sheet.cell(2, 14, datetime(2026, 11, 5)).number_format = 'mm/dd/yyyy'
+            if kind == 'co':
+                sheet.cell(2, 8, 'Assign to ABS')
+            book.save(path)
+            book.close()
+
+        settings = {}
+        store = SimpleNamespace(root=self.root/'previews', list=lambda: [{'id': 1}])
+        workspace = SimpleNamespace(store=store, read=lambda: settings, save=lambda **values: settings.update(values))
+        app = Flask(__name__)
+        register_production_export(app, workspace, lambda _: self.report)
+        client = app.test_client()
+
+        expected = {
+            'full-old': datetime(2026, 11, 7, 14, 37, 1),
+            'co-old': datetime(2026, 11, 8, 21, 16, 9),
+            'new-full': datetime(2026, 11, 8, 12, 6, 15),
+        }
+        report = Workbook()
+        report.active.append(['Order Number', 'Completed Time (hours)'])
+        report.active.append(['full-old', '11/7/2026 02:00:00'])
+        report.active.append(['full-old', '11/7/2026 03:00:00'])
+        report.active.append(['co-old', '11/8/2026 09:46:09'])
+        report.active.append(['new-full', '11/8/2026 00:36:15'])
+        stream = BytesIO()
+        report.save(stream)
+        report.close()
+        stream.seek(0)
+        upload = client.post('/api/production-report/completion-upload', data={'file': (stream, 'ExcelReport.xlsx')})
+        self.assertEqual(upload.json['conflicts'], 1)
+
+        moved = client.post('/api/production-report/resolve-conflicts-version', json={
+            'token': upload.json['token'],
+            'resolutions': [{'order_number': 'full-old', 'time_ist': expected['full-old'].isoformat(sep=' ')}],
+        })
+        self.assertEqual(moved.status_code, 200, moved.json)
+        request = {
+            'folder': str(self.root), 'preview_id': 1, 'completion_token': moved.json['token'],
+            'export_options': dict(new_orders=True, status_changes=True, completion_times=True, completed_tv=True),
+        }
+        checked = client.post('/api/production-report/check', json=request)
+        self.assertEqual(checked.status_code, 200, checked.json)
+        result = client.post('/api/production-report/proceed', json=dict(request, fingerprint=checked.json['fingerprint']))
+        self.assertEqual(result.status_code, 200, result.json)
+
+        for path in self.files.values():
+            with self.subTest(path=path.name):
+                book = load_workbook(path)
+                for row in book.active.iter_rows(min_row=2):
+                    order = row[2].value
+                    if order in expected:
+                        self.assertEqual(row[13].value, expected.pop(order))
+                        self.assertEqual(row[13].number_format, 'yyyy-mm-dd hh:mm:ss')
+                book.close()
+        self.assertEqual(expected, {})
+        rechecked = client.post('/api/production-report/check', json=request)
+        self.assertEqual(sum(report['completion_count'] for report in rechecked.json['reports']), 0)
 
     def checkpoint(self):
         from production_export import revert_checkpoint

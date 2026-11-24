@@ -74,8 +74,7 @@ class SlaStatusTests(unittest.TestCase):
     def test_positive_queue_countdown_stays_today_across_the_ist_day_boundary(self):
         snapshot = {'updated_at': '2026-11-19T12:19:43+05:30', 'report_scope': 'preview',
                     'sla_reference_at': '2026-11-18T23:10:00', 'sheets': {'Overview': {'rows': [
-                        {'Order Number': 'positive', 'SLA Expiration*': '7h 10m',
-                         'SLA Expiration': '2026-11-19 07:59:43'},
+                        {'Order Number': 'positive', 'SLA Expiration*': '7h 10m'},
                         {'Order Number': 'negative', 'SLA Expiration*': '-4h 54m'},
                         {'Order Number': 'future', 'SLA Expiration*': '11/20 12:59 PM'},
                     ], 'columns': []}}}

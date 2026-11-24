@@ -315,8 +315,7 @@ def category(value, as_of, anchor=None, raw_countdown=None):
         days = int(match_cd[2] or 0)
         if days == 1:
             return 'Today SLA'
-        due = local_datetime(value) or ((anchor or as_of) + timedelta(
-            days=days, hours=int(match_cd[3] or 0), minutes=int(match_cd[4] or 0)))
+        due = (anchor or as_of) + timedelta(days=days, hours=int(match_cd[3] or 0), minutes=int(match_cd[4] or 0))
         return 'Today SLA' if due.date() == as_of.date() else 'Negative SLA' if due.date() < as_of.date() else 'Future SLA'
 
     raw = str(value if value is not None else '').replace('\u2212', '-').strip()
@@ -396,7 +395,7 @@ def build_sla_status(snapshot, as_of=None):
         as_of = as_of.astimezone(PORTAL_TIMEZONE).replace(tzinfo=None)
     anchor = as_of if snapshot.get('report_scope') == 'imported_date' else (captured_at or as_of)
     if snapshot.get('report_scope') == 'preview':
-        # Use the report day when a saved countdown has no resolved deadline.
+        # Bucket saved countdowns against the same calendar day the report displays.
         anchor = as_of.replace(hour=0, minute=0, second=0, microsecond=0)
     rows, excluded, counts = [], [], Counter()
     for original in source['rows']:

@@ -927,12 +927,29 @@ def register_report_routes(app, workspace, gate, load_snapshot, get_book, invali
         query = request.args.get('search', '').strip().casefold()[:200]
         if not query:
             return jsonify(rows=[], columns=[], total=0)
-        snapshot = capacity_snapshot(workspace.read()) if request.args.get('scope') == 'capacity' else load_snapshot()
+        capacity = request.args.get('scope') == 'capacity'
+        settings = workspace.read() if capacity else None
+        snapshot = capacity_snapshot(settings) if capacity else load_snapshot()
         overview = snapshot['sheets']['Overview']
         rows = overview['rows']
         exact = [row for row in rows if str(row.get('Order Number', '')).strip().casefold() == query]
         matches = exact or [row for row in rows if query in str(row.get('Order Number', '')).casefold()]
-        return jsonify(rows=matches[:200], columns=overview['columns'], total=len(matches),
+        results = matches[:200]
+        if capacity and results:
+            # The Overview numbers rows by arrival. For Capacity search, use the
+            # imported workbook value and keep repeated order rows independent.
+            from production_export import norm, SERIAL_NUMBER_HEADERS
+            from tracker_sync import key
+            wanted = {row['_record_key'] for row in results}
+            serials = {}
+            for row in (settings.get('imported') or {}).get('rows', []):
+                identity = key(row)
+                if identity in wanted:
+                    serials[identity] = next((value for header, value in row.items()
+                                              if norm(header) in SERIAL_NUMBER_HEADERS
+                                              and value is not None and str(value).strip()), '')
+            results = [dict(row, No=serials.get(row['_record_key'], '')) for row in results]
+        return jsonify(rows=results, columns=overview['columns'], total=len(matches),
                        mode=snapshot.get('mode'), source=snapshot.get('source'), offline=snapshot.get('offline', False))
 
     @app.get('/api/capacity-report/details')

@@ -112,14 +112,17 @@ test('completion upload is included in checks and shows completion counts and de
     if(name.endsWith('/completion-upload')){
       const names=Array.from(route.request().postData().matchAll(/filename="([^"]+)"/g),match=>match[1]);
       uploads.push(names);
-      body={token:`test-token-${uploads.length}`,names,files:names.length,orders:1,conflicts:names.length-1,
-        completion_rows:[{'Order Number':'DONE-1','Completion time (IST)':'2026-11-11 06:19:29','Source files':names[0]}],
-        conflict_rows:names.length>1?[{'Order Number':'CONFLICT-1','Reported times (U.S. Central)':'Two different times'}]:[]};
+      body={token:`test-token-${uploads.length}`,names,files:names.length,orders:2,conflicts:names.length>1?2:0,
+        completion_rows:[{'Order Number':'DONE-1','Completion time (IST)':'2026-11-11 06:19:29','Source files':names[0]},
+          {'Order Number':'UNMATCHED-DONE'}],
+        conflict_rows:names.length>1?[{'Order Number':'CONFLICT-1','Reported times (U.S. Central)':'Two different times'},
+          {'Order Number':'UNMATCHED-CONFLICT'}]:[]};
       if(uploads.length===1){
         delete body.completion_rows;
         delete body.conflict_rows;
       }
     }
+    if(name.endsWith('/completion-serials'))body={serials:{'done-1':'671','conflict-1':'749'}};
     if(name.endsWith('/check')){
       token=route.request().postDataJSON().completion_token;
       body={preview_name:'preview32',fingerprint:'checked',columns:['Order Number','Out Time'],rows:[],unresolved:[],reports:[{kind:'full',name:'Full Search.xlsx',sheet:'TV Orders',missing:0,existing:2,skipped:0,orders:[],completion_count:1,completion_kept:1,completion_unmatched:0,completion_orders:[{'Order Number':'DONE-1','Out Time':'2026-11-11T06:19:29'}]}]};
@@ -131,14 +134,18 @@ test('completion upload is included in checks and shows completion counts and de
   await page.getByRole('button',{name:'Production Report',exact:true}).click();
   await page.getByLabel('Production report folder',{exact:true}).fill('C:\\Reports\\Session');
   await page.getByLabel('Upload completed ExcelReport',{exact:true}).setInputFiles(['ExcelReport.xlsx','ExcelReport(2).xlsx'].map(name=>({name,mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:Buffer.from('mock upload')})));
-  await page.getByRole('button',{name:'1 orders with completion times',exact:true}).click();
+  await page.getByRole('button',{name:'orders with completion times',exact:true}).click();
   const uploaded=page.getByRole('dialog',{name:'Orders with completion times'});
   await expect(uploaded.getByRole('cell',{name:'DONE-1',exact:true})).toBeVisible();
+  await expect(uploaded.getByRole('cell',{name:'671',exact:true})).toBeVisible();
+  await expect(uploaded.getByRole('cell',{name:'UNMATCHED-DONE',exact:true})).toHaveCount(0);
   await uploaded.getByRole('textbox',{name:'Search by order number'}).fill('unknown');
   await expect(uploaded.getByText('No matching rows')).toBeVisible();
   await page.keyboard.press('Escape');
   await page.getByRole('button',{name:'1 conflicting orders excluded',exact:true}).click();
   await expect(page.getByRole('dialog',{name:'Conflicting orders excluded'}).getByRole('cell',{name:'CONFLICT-1',exact:true})).toBeVisible();
+  await expect(page.getByRole('dialog',{name:'Conflicting orders excluded'}).getByRole('cell',{name:'749',exact:true})).toBeVisible();
+  await expect(page.getByRole('dialog',{name:'Conflicting orders excluded'}).getByRole('cell',{name:'UNMATCHED-CONFLICT',exact:true})).toHaveCount(0);
   await page.keyboard.press('Escape');
   await expect(page.getByText('ExcelReport.xlsx',{exact:true})).toBeVisible();
   await page.getByRole('button',{name:'Check folder & orders',exact:true}).click();
@@ -249,3 +256,82 @@ test('report titles and counts open only their missing orders in a popup',async(
   await page.getByRole('button',{name:'Full Search: 1 orders added',exact:true}).click();
   await expect(page.getByRole('dialog',{name:'Full Search — orders added'}).getByRole('cell',{name:'FULL-NEW',exact:true})).toBeVisible();
 });
+
+
+for(const multiple of [false,true]){
+test(`product selection (${multiple?'multiple S.No values':'single S.No'}) keeps IST and supports undo and redo`,async({page})=>{
+  const fixture=workspaceFixture(3);
+  const candidate={product:'Full Title',time_central:'2026-11-11 00:22:36',time_ist:'2026-11-11 11:52:36',files:['one.xlsx']};
+  const conflict={'Order Number':'CONFLICT-1',Products:'Full Title, ClientReview',candidates:[
+    candidate,{product:'ClientReview',time_central:'2026-11-12 01:00:00',time_ist:'2026-11-12 12:30:00',files:['two.xlsx']}
+  ]};
+  let move;
+  let engineOutdated=true;
+  await page.route('**/api/**',async route=>{
+    const name=new URL(route.request().url()).pathname;
+    let body=fixture.response(name);
+    if(name==='/api/production-report')body={folder:'C:\\Reports',previews:fixture.previews};
+    if(name.endsWith('/completion-serials'))body={serials:{'conflict-1':multiple?'1910, 1966':'1461'}};
+    if(name.endsWith('/completion-upload'))body={token:'original',names:['one.xlsx'],files:1,orders:0,conflicts:1,completion_rows:[],conflict_rows:[conflict]};
+    if(name.endsWith(multiple?'/resolve-product-conflicts':'/resolve-conflicts-version')){
+      if(engineOutdated)return route.fulfill({status:404,json:{error:'Unknown action'}});
+      move=route.request().postDataJSON();
+      body={token:'updated',orders:1,conflicts:0,completion_rows:[{'Order Number':'CONFLICT-1','Completion time (IST)':candidate.time_ist}],conflict_rows:[]};
+    }
+    await route.fulfill({json:body});
+  });
+  await page.goto('/');
+  await page.getByRole('button',{name:'Production Report',exact:true}).click();
+  await page.getByLabel('Upload completed ExcelReport').setInputFiles({name:'one.xlsx',mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',buffer:Buffer.from('mock upload')});
+  await page.getByRole('button',{name:'1 conflicting orders excluded',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'Conflicting orders excluded'});
+  const row=dialog.getByRole('row').filter({hasText:'CONFLICT-1'});
+  await expect(row.getByRole('checkbox')).toHaveCount(0);
+  const product=row.getByRole('button',{name:'Full Title',exact:true});
+  const picker=dialog.getByText('Select products',{exact:true});
+  await picker.click();
+  await dialog.getByRole('checkbox',{name:'Full Title',exact:true}).check();
+  await dialog.getByRole('button',{name:'Apply (1)',exact:true}).click();
+  await expect(product).toHaveAttribute('aria-pressed','true');
+  await picker.click();
+  await expect(dialog.getByRole('checkbox',{name:'Full Title',exact:true})).toBeChecked();
+  await dialog.getByRole('checkbox',{name:'Full Title',exact:true}).uncheck();
+  await dialog.getByRole('button',{name:'Apply',exact:true}).click();
+  await expect(product).toHaveAttribute('aria-pressed','false');
+  await product.click();
+  await expect(product).toHaveAttribute('aria-pressed','true');
+  await expect(row.getByText(candidate.time_ist,{exact:!multiple})).toBeVisible();
+  await row.getByRole('button',{name:'Edit Indian date and time'}).click();
+  const timeFields=row.getByRole('group',{name:'Indian completion time'});
+  for(const heading of ['HH','MM','SS'])await expect(timeFields.getByText(heading,{exact:true})).toBeVisible();
+  await timeFields.getByLabel('Seconds').selectOption('42');
+  await row.getByRole('button',{name:'Confirm date and time'}).click();
+  await expect(row.getByText('2026-11-11 11:52:42',{exact:!multiple})).toBeVisible();
+  const second=row.getByRole('button',{name:'ClientReview',exact:true});
+  await second.click();
+  await expect(product).toHaveAttribute('aria-pressed',String(multiple));
+  await expect(second).toHaveAttribute('aria-pressed','true');
+  if(!multiple)await product.click();
+  await expect(row.getByRole('cell',{name:'CONFLICT-1',exact:true})).toBeVisible();
+  await dialog.getByRole('button',{name:'Move Selected to Completed (1)',exact:true}).click();
+  await expect(dialog.getByRole('alert')).toContainText('Restart it from the updated workspace');
+  await expect(product).toHaveAttribute('aria-pressed','true');
+  await expect(dialog.getByRole('button',{name:'Undo',exact:true})).toBeDisabled();
+  engineOutdated=false;
+  await row.getByRole('button',{name:'Move to Completed',exact:true}).click();
+  await expect(dialog).toBeHidden();
+  await page.getByRole('button',{name:'0 conflicting orders excluded',exact:true}).click();
+  await expect(dialog.getByText('No conflicting orders in this upload.')).toBeVisible();
+  const resolutions=[{order_number:'CONFLICT-1',time_ist:multiple?'2026-11-11 11:52:42':candidate.time_ist,source_file:'one.xlsx',time_central:candidate.time_central}];
+  if(multiple){
+    resolutions[0].product='Full Title';
+    resolutions.push({order_number:'CONFLICT-1',product:'ClientReview',time_ist:'2026-11-12 12:30:00',
+      source_file:'two.xlsx',time_central:'2026-11-12 01:00:00'});
+  }
+  expect(move).toEqual({token:'original',resolutions});
+  await dialog.getByRole('button',{name:'Undo',exact:true}).click();
+  await expect(row).toBeVisible();
+  await dialog.getByRole('button',{name:'Redo',exact:true}).click();
+  await expect(dialog.getByText('No conflicting orders in this upload.')).toBeVisible();
+});
+}

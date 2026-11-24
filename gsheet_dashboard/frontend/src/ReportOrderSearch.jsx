@@ -3,7 +3,7 @@ import {Search,LoaderCircle,X} from 'lucide-react';
 import {api,str} from './workspaceUtils';
 import {DataTable} from './WorkspaceViews';
 
-export default function ReportOrderSearch({name,rows,columns=[],revision,disabled=false,scope=''}) {
+export default function ReportOrderSearch({name,rows,columns=[],revision,disabled=false,scope='',renderSearch}) {
   const [search,setSearch]=useState(''),[result,setResult]=useState(null),[loading,setLoading]=useState(false),[error,setError]=useState('');
   const query=search.trim().toLowerCase();
   useEffect(()=>{
@@ -24,12 +24,17 @@ export default function ReportOrderSearch({name,rows,columns=[],revision,disable
   },[rows,query,result]);
   const detailColumns=useMemo(()=>{
     const names=new Set([...(rows?columns:result?.columns||[]),...matches.flatMap(row=>Object.keys(row))]);
-    return [...new Set(['Order Number','Status','SLA Category','Out Time','Date','In-Time','Source workbook','Product',...names])]
+    const preferredColumns=['Order Number','Status','SLA Category','Out Time','Date','In-Time','Source workbook','Product'];
+    if(scope==='capacity')preferredColumns.unshift('No');
+    return [...new Set([...preferredColumns,...names])]
       .filter(column=>names.has(column)&&!column.startsWith('_'));
-  },[rows,columns,result,matches]);
-  return <section className="report-order-search" aria-label={`${name} order search`}>
+  },[rows,columns,result,matches,scope]);
+  const searchField=<>
     <label className="report-order-search-label" htmlFor={`report-order-search-${name.replaceAll(' ','-')}`}>Search order number</label>
     <div className="search-input"><Search size={16}/><input id={`report-order-search-${name.replaceAll(' ','-')}`} type="text" aria-label={`Search ${name} orders`} placeholder="Enter an Order Number" value={search} disabled={disabled} onChange={event=>setSearch(event.target.value)}/>{search&&<button type="button" className="icon-button" aria-label={`Clear ${name} order search`} onClick={()=>setSearch('')}><X size={16}/></button>}</div>
+  </>;
+  return <section className="report-order-search" aria-label={`${name} order search`}>
+    {renderSearch?renderSearch(searchField):searchField}
     {query&&<div aria-live="polite">
       {loading?<p className="muted"><LoaderCircle size={16} className="spin"/> Searching orders…</p>:error?<p className="notice warning" role="alert">{error}</p>:(rows||result)&&<>
         <p className="report-context">{result?.total??matches.length} matching order{(result?.total??matches.length)===1?'':'s'}{result?.total>matches.length?` · first ${matches.length} shown`:''}</p>

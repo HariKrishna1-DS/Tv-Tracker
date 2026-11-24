@@ -1,7 +1,7 @@
 import React, {Children,Fragment,cloneElement,isValidElement,useEffect,useLayoutEffect,useMemo,useRef,useState} from 'react';
 import {createPortal} from 'react-dom';
 import {Filter,X} from 'lucide-react';
-import {matches,str} from './workspaceUtils';
+import {columnValues,matches,str} from './workspaceUtils';
 import './columnFilters.css';
 
 export function useColumnFilters(rows,columns) {
@@ -19,7 +19,7 @@ function FilterMenu({column,controls,anchor,onClose}) {
   const options=useMemo(()=>{
     const counts=new Map();
     for(const row of controls.sourceRows)if(matches(row,controls.filters,column)){
-      const value=str(row[column]);counts.set(value,(counts.get(value)||0)+1);
+      for(const value of columnValues(row,column))counts.set(value,(counts.get(value)||0)+1);
     }
     return [...counts].sort(([a],[b])=>a.localeCompare(b,undefined,{numeric:true}));
   },[controls.sourceRows,controls.filters,column]);

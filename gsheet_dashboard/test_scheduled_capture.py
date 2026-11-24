@@ -41,6 +41,24 @@ class ScheduledCaptureTests(unittest.TestCase):
             time.sleep(.02)
         self.fail('Worker did not finish')
 
+    def test_schedule_accepts_seconds_and_waits_until_the_slot_is_due(self):
+        def runner(on_progress):
+            preview = self.store.save(pd.DataFrame([{'Order Number': '1', 'Task Status': 'Available'}]))
+            return {'preview_id': preview['id'], 'error': None}
+
+        now = datetime(2026, 9, 30, 7, 30, 14, tzinfo=timezone.utc)
+        app = create_app(self.store.root, runner=runner,
+                         time_source=Mock(now=lambda: now.astimezone(IST), snapshot=lambda: {}))
+        client = app.test_client()
+        saved = client.post('/api/sync-schedule', json={'enabled': True, 'times': ['13:00:25', '14:00:00']})
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(saved.json['times'], ['13:00:25', '14:00'])
+        tick = app.extensions['schedule_tick']
+        self.assertFalse(tick(now.replace(second=24)))
+        self.assertTrue(tick(now.replace(second=25)))
+        self.wait_finished(client)
+        self.assertFalse(tick(now.replace(second=26)))
+
     def test_ist_capture_is_local_then_manual_sync_and_once_per_day(self):
         release = threading.Event()
         self.addCleanup(release.set)

@@ -57,7 +57,6 @@ for(const theme of ['light','dark'])test(`workspace appearance is consistent in 
     let body=fixture.response(name);
     if(name==='/api/state')body={...body,sheet_url:'https://docs.google.com/spreadsheets/d/example/edit',report_workspace:{mode:'excel',row_count:12}};
     if(name==='/api/daily-orders')body={mode:'excel',source:'Imported Excel',selected_date:'2026-10-05',rows:[{Date:'2026-10-05',Received:12,Completed:1,Clarification:0,Cancelled:0,'Vendor Pending':0,'In-House Pending':11,'SLA OnTime':0,Missing:0,columns:fixture.columns,rows:fixture.rows,sla_rows:[],Previews:[]}]};
-    if(name==='/api/daily-orders/details')body={mode:'excel',source:'Imported Excel',columns:fixture.columns,groups:[{key:'received',label:'Received',rows:fixture.rows}]};
     if(name==='/api/report-workspace')body={mode:'excel',row_count:12};
     if(name==='/api/capacity-report')body={month:'2026-10',source:'Imported Excel',capacity:700,extended_capacity:750,columns:['Date','Received','Completed','Clarification','Cancelled','Vendor Pending','In-House Pending','Capacity','Ext capacity'],monthly:[{Date:'2026-10',Received:12,Completed:3}],daily:[{Date:'2026-10-05',Received:12,Completed:3}]};
     if(name==='/api/sla-status')body={as_of:'2026-10-05',source:'Saved capture',columns:fixture.columns,rows:fixture.rows,previews:fixture.previews,summary:[{Status:'Search In Progress','Future SLA':4,'Negative SLA':4,'Today SLA':4,'Grand Total':12}],summary_columns:['Status','Future SLA','Negative SLA','Today SLA','Grand Total'],totals:{Status:'Grand Total','Future SLA':4,'Negative SLA':4,'Today SLA':4,'Grand Total':12},excluded_rows:[],excluded_count:0};
@@ -75,12 +74,7 @@ for(const theme of ['light','dark'])test(`workspace appearance is consistent in 
     await expect(page.locator('.topbar .secondary').first()).toHaveCSS('border-radius','10px');
     await expect(page.locator('.sidebar .nav-item[aria-current="page"]')).toHaveCount(1);
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-    if(view==='daily'){
-      await page.getByRole('button',{name:'Completed 1',exact:true}).click();
-      const completed=page.getByRole('dialog',{name:'Completed · 05-10-26'});
-      await expect(completed.locator('.completed-order-row td').first()).toHaveCSS('background-color','rgb(255, 255, 153)');
-      await page.keyboard.press('Escape');
-    }
+    if(view==='daily')await expect(page.locator('.completed-order-row td').first()).toHaveCSS('background-color','rgb(255, 255, 153)');
     await page.screenshot({path:`test-results/ui-${view}-${theme}.png`,animations:'disabled'});
   }
   await page.getByRole('button',{name:'Settings',exact:true}).click();

@@ -114,7 +114,10 @@ export default function CapacityReport({revision,running}) {
   }
   const table=(title,rows)=><section className="table-section"><h2>{title}</h2><div className="table-scroll"><FilterableTable><thead><tr>{report.columns.map(column=><th key={column}>{column}</th>)}</tr></thead><tbody>{rows.map(row=><tr key={row.Date} className={row.Date.includes('Total')?`capacity-total ${row.Date==='Total'?'capacity-daily-total':''}`:row.Date===detailDate||row.Date===detailMonth?'daily-date-selected':undefined}>{report.columns.map(column=><td key={column}>{column==='Date'?/^\d{4}-\d{2}(-\d{2})?$/.test(row.Date)?<button type="button" className="text-button" aria-pressed={row.Date===detailDate||row.Date===detailMonth} onClick={()=>row.Date.length===7?setDetailMonth(row.Date):setDetailDate(row.Date)}>{displayDate(row.Date)}</button>:displayDate(row[column]):<button type="button" className="text-button" aria-label={`${displayDate(row.Date)}, ${column}: ${row[column]??0}`} onClick={()=>showCount(row,column)}>{row[column]??0}</button>}</td>)}</tr>)}</tbody></FilterableTable></div></section>;
   if(!report&&!error)return <LoadingScreen title="Loading capacity report…"/>;
-  return <section className="daily-orders capacity-report"><div className="section-heading"><h2>PR Excel</h2><a className="secondary" href="/api/export/report?sheet=PR%20Excel" download>Download PR Excel</a></div><div className="monthly-actions"><label>Daily capacity<input type="number" min="0" step="1" value={capacity} onChange={e=>setCapacity(e.target.value)}/></label><label>Extended daily capacity<input type="number" min="0" step="1" value={extended} onChange={e=>setExtended(e.target.value)}/></label><button className="primary" disabled={busy||running} onClick={save}>{busy?'Saving…':'Save capacity'}</button></div>
+  return <section className="daily-orders capacity-report"><div className="section-heading"><h2>PR Excel</h2><a className="secondary" href="/api/export/report?sheet=PR%20Excel" download>Download PR Excel</a></div>
+    <ReportOrderSearch name="Capacity Report" scope="capacity" revision={report} disabled={!report} renderSearch={searchField=>(
+      <div className="capacity-toolbar"><div className="monthly-actions"><label>Daily capacity<input type="number" min="0" step="1" value={capacity} onChange={e=>setCapacity(e.target.value)}/></label><label>Extended daily capacity<input type="number" min="0" step="1" value={extended} onChange={e=>setExtended(e.target.value)}/></label><button className="primary" disabled={busy||running} onClick={save}>{busy?'Saving…':'Save capacity'}</button></div><div className="capacity-order-field">{searchField}</div></div>
+    )}/>
 
     {report?.import_required&&<p className="notice">Import Excel files to populate Capacity Report.</p>}
     <div className="capacity-report-tools">
@@ -124,7 +127,6 @@ export default function CapacityReport({revision,running}) {
         {report.completion_date_basis==='out_time'&&<p className="report-context">Completed counts use each Completed and Delivered order’s Out Time, including orders received in earlier months. A date can have completions even when no orders were received that day.{report.missing_completion_date_count>0&&` ${report.missing_completion_date_count} completed orders have a blank or invalid Out Time and are excluded from completed counts.`}</p>}
         <p className="report-context">{report.source} · {report.scope_label||report.month}</p>
       </details>}
-      <ReportOrderSearch name="Capacity Report" scope="capacity" revision={report} disabled={!report}/>
     </div>
     {error&&<p className="notice warning" role="alert">{error}</p>}
     <OfflineNotice snapshot={report}/>

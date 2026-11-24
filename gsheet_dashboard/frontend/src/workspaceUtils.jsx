@@ -60,16 +60,23 @@ function csvDownload(rows, columns, name) {
   const cell = value => {const raw=str(value);return '"'+(/^[\s]*[=+@-]|^[\t\r\n]/.test(raw)?"'":'')+raw.replaceAll('"','""')+'"';};
   saveBlob(new Blob(['\ufeff' + [columns, ...rows.map(row => columns.map(c => row[c]))].map(row => row.map(cell).join(',')).join('\r\n')], {type: 'text/csv;charset=utf-8'}), name);
 }
+export function columnValues(row, column) {
+  const value=str(row[column]);
+  if(column!=='Products')return [value];
+  const values=[...new Set(value.split(',').map(product=>product.trim()).filter(Boolean))];
+  return values.length?values:[''];
+}
+
 function matches(row, filters, except) {
   return Object.entries(filters).every(([column, filter]) => {
     if (column === except) return true;
     const value = str(row[column]);
-    if (filter.values && !filter.values.includes(value)) return false;
+    if (filter.values && !columnValues(row,column).some(item=>filter.values.includes(item))) return false;
     if (!filter.operator || filter.operator === 'none') return true;
     const query = filter.query || '';
     if (filter.operator === 'contains') return value.toLowerCase().includes(query.toLowerCase());
     if (filter.operator === 'excludes') return !value.toLowerCase().includes(query.toLowerCase());
-    if (filter.operator === 'equals') return value === query;
+    if (filter.operator === 'equals') return columnValues(row,column).includes(query);
     if (filter.operator === 'blank') return !value;
     if (filter.operator === 'notblank') return !!value;
     const parse = v => v.trim() === '' ? NaN : Number.isFinite(Number(v)) ? Number(v) : Date.parse(v);

@@ -5,7 +5,7 @@ import {workspaceFixture} from './workspace-fixture.js';
 
 test('SLA and Capacity search find order status, include excluded orders and handle no matches',async({page})=>{
   const fixture=workspaceFixture(3),errors=[];
-  const rows=[{...fixture.rows[0],Status:'Completed and Delivered','Out Time':'10/13/2026 03:00 PM','SLA Category':'Future SLA'},
+  const rows=[{...fixture.rows[0],No:285,Status:'Completed and Delivered','Out Time':'10/13/2026 03:00 PM','SLA Category':'Future SLA'},
     {...fixture.rows[1],Status:'Assign to ABS','SLA Category':'Today SLA'},
     {...fixture.rows[2],Status:'QC in Progress','SLA issue':'Missing SLA expiration'}];
   const settings={mode:'excel',row_count:3,files:[],publication_state:'synced'};
@@ -53,10 +53,28 @@ test('SLA and Capacity search find order status, include excluded orders and han
   await page.getByLabel('Search Capacity Report orders',{exact:true}).fill('62000');
   await expect(capSearch.getByRole('cell',{name:'Completed and Delivered',exact:true})).toBeVisible();
   await expect(capSearch.getByRole('cell',{name:'10/13/2026 03:00 PM',exact:true})).toBeVisible();
+  await expect(capSearch.getByRole('columnheader').first()).toContainText('No');
+  await expect(capSearch.getByRole('cell').first()).toHaveText('285');
   await page.getByLabel('Search Capacity Report orders',{exact:true}).fill('unknown');
   await expect(capSearch.getByText('No orders match this order number.')).toBeVisible();
   await page.getByLabel('Search Capacity Report orders',{exact:true}).fill('TV-62000');
   await expect(capSearch.getByRole('cell',{name:'Completed and Delivered',exact:true})).toBeVisible();
+  const capacityInput=capSearch.getByRole('textbox',{name:'Search Capacity Report orders'});
+  const capacityTable=capSearch.locator('.table-scroll');
+  const toolbar=await capSearch.locator('.capacity-toolbar').boundingBox();
+  const searchField=await capSearch.locator('.capacity-order-field').boundingBox();
+  const saveCapacity=await capSearch.getByRole('button',{name:'Save capacity'}).boundingBox();
+  expect(searchField.x).toBeGreaterThan(saveCapacity.x+saveCapacity.width);
+  expect(Math.abs(searchField.x+searchField.width/2-(toolbar.x+toolbar.width/2))).toBeLessThan(3);
+  await capacityInput.scrollIntoViewIfNeeded();
+  await expect(capacityInput).toBeInViewport({ratio:1});
+  await expect(capacityInput).toBeFocused();
+  await expect(capacityInput).toHaveValue('TV-62000');
+  expect(await capacityTable.evaluate(table=>{
+    table.scrollLeft=table.scrollWidth;
+    return table.scrollLeft>0 && table.getBoundingClientRect().right<=window.innerWidth;
+  })).toBe(true);
+  await capacityTable.evaluate(table=>{table.scrollLeft=0;});
   await capSearch.scrollIntoViewIfNeeded();
   await page.screenshot({path:'test-results/capacity-order-search.png',animations:'disabled'});
   await page.setViewportSize({width:390,height:844});
