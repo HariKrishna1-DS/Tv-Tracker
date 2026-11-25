@@ -8,7 +8,7 @@ import csv
 import openpyxl
 
 from tracker_sync import canonical_headers, key, text, STATUS_NAMES
-from sla_status import preview_snapshot, build_sla_status
+from sla_status import preview_snapshot, build_sla_status, special_product_status
 from import_identity import number_key
 from sla_manual import revision as sla_revision
 from new_order_report import NEW_ORDER_COLUMNS, production_record, comparison_record, plain_comment
@@ -405,6 +405,10 @@ def compare_sla_with_production(sla_report, production_rows, preview_name=''):
 
         sla_item = sla_map.get(k)
         prod_item = prod_map.get(k)
+        queue_product = text((sla_item or {}).get('Product'))
+        production_product = text((prod_item or {}).get('product'))
+        attorney_approval = any(special_product_status(product) == 'Attorney Approval'
+                                for product in (queue_product, production_product))
 
         order_no = (sla_item.get('Order Number') if sla_item else None) or (prod_item.get('order_number') if prod_item else '')
 
@@ -414,7 +418,9 @@ def compare_sla_with_production(sla_report, production_rows, preview_name=''):
             prod_status_str = normalize_status(prod_item.get('status', ''))
             imported_prod_status = prod_status_str
             # Completed Excel rows must not replace the active preview status.
-            if prod_status_str == 'Completed and Delivered':
+            if attorney_approval:
+                prod_status_str = 'Attorney Approval'
+            elif prod_status_str == 'Completed and Delivered':
                 prod_status_str = sla_status_str
 
             # Check if statuses differ
@@ -460,6 +466,7 @@ def compare_sla_with_production(sla_report, production_rows, preview_name=''):
         elif in_sla:
             sla_only_count += 1
             sla_status_str = normalize_status(sla_item.get('Status', ''))
+            grouped_status = 'Attorney Approval' if attorney_approval else 'Home Builders' if sla_status_str == 'Home Builders' else ''
             orders.append({
                 'order_number': order_no,
                 'match_type': 'sla_only',
@@ -469,8 +476,8 @@ def compare_sla_with_production(sla_report, production_rows, preview_name=''):
                 'sla_category': sla_item.get('SLA Category') or 'Unknown SLA',
                 'queue_sla_category': sla_item.get('SLA Category') or 'Unknown SLA',
                 'prod_sla_category': sla_item.get('SLA Category') or 'Unknown SLA',
-                'prod_status': 'Home Builders' if sla_status_str == 'Home Builders' else 'Not in Production Report',
-                'change_label': 'Home Builders' if sla_status_str == 'Home Builders' else 'Pending in Queue (SLA only)',
+                'prod_status': grouped_status or 'Not in Production Report',
+                'change_label': grouped_status or 'Pending in Queue (SLA only)',
                 'product': sla_item.get('Product') or '',
                 'state': sla_item.get('State') or sla_item.get('St') or '',
                 'county': sla_item.get('County') or '',
@@ -502,7 +509,8 @@ def compare_sla_with_production(sla_report, production_rows, preview_name=''):
                 'sla_category': 'Not in SLA Queue',
                 'queue_sla_category': 'Not in SLA Queue',
                 'prod_sla_category': 'Not in SLA Queue',
-                'prod_status': prod_status_str or '(Blank)',
+                'prod_status': 'Attorney Approval' if attorney_approval else (prod_status_str or '(Blank)'),
+                'imported_prod_status': prod_status_str or '(Blank)',
                 'change_label': 'Production Report Only',
                 'product': prod_item.get('product') or '',
                 'state': prod_item.get('state') or '',
@@ -549,6 +557,10 @@ def compare_sla_with_production(sla_report, production_rows, preview_name=''):
 def comparison_summary_status(order):
     if order.get('match_type') == 'prod_only':
         return None
+    if order.get('match_type') == 'sla_only':
+        return order.get('sla_status') or '(Blank)'
+    if order.get('prod_status') == 'Attorney Approval':
+        return 'Attorney Approval'
     if normalize_status(order.get('sla_status')) == 'Home Builders':
         return 'Home Builders'
     if order.get('match_type') in ('status_moved', 'same_status'):
@@ -727,7 +739,7 @@ def export_comparison_excel(result, table_scope='all', filter_type=None, sla_sta
                 res = [o for o in res if o['match_type'] in ('status_moved', 'same_status')]
             elif ft in ('same_status', 'same', 'identical'):
                 res = [o for o in res if o['match_type'] == 'same_status']
-            elif ft in ('sla_only', 'new_orders', 'new'):
+            elif ft in ('sla_only', 'new_orders', 'new', 'unmatched'):
                 res = [o for o in res if o['match_type'] == 'sla_only']
             elif ft in ('prod_only', 'production_only'):
                 res = [o for o in res if o['match_type'] == 'prod_only']
@@ -803,7 +815,7 @@ def export_comparison_excel(result, table_scope='all', filter_type=None, sla_sta
         ws['A2'] = f"Preview: {preview_name} | SLA Orders: {result.get('metrics', {}).get('total_sla', 0)} | As of: {as_of} | Exported: {now_str}"
         ws['A2'].font = sub_font
 
-        headers = ['Production Status', *export_categories, 'Grand Total']
+        headers = ['Status', *export_categories, 'Grand Total']
         for c_idx, h in enumerate(headers, start=1):
             cell = ws.cell(row=4, column=c_idx, value=h)
             cell.font = matrix_hdr_font
@@ -838,7 +850,7 @@ def export_comparison_excel(result, table_scope='all', filter_type=None, sla_sta
         ws.freeze_panes = 'B5'
         ws.auto_filter.ref = f'A4:{get_column_letter(len(headers))}{cur_r-1}'
         details = wb.create_sheet('Related Orders')
-        fields = [('Order Number','order_number'), ('Production Status',None),
+        fields = [('Order Number','order_number'), ('Status',None),
                   ('SLA Category','sla_category'), ('SLA Status (Queue)','sla_status'),
                   ('Imported Production Status','imported_prod_status'),
                   ('Status Movement','change_label'), ('Product','product'), ('State','state'),
@@ -1044,7 +1056,7 @@ def export_comparison_excel(result, table_scope='all', filter_type=None, sla_sta
         ws_sum[f'A{sum_start}'] = 'SLA Status Summary Matrix (SLA Status categories)'
         ws_sum[f'A{sum_start}'].font = Font(name='Calibri', size=12, bold=True, color='1F2937')
 
-        sla_headers = ['Production Status', *export_categories, 'Grand Total']
+        sla_headers = ['Status', *export_categories, 'Grand Total']
         for c_idx, h_name in enumerate(sla_headers, start=1):
             cell = ws_sum.cell(row=sum_start + 1, column=c_idx, value=h_name)
             cell.font = matrix_hdr_font

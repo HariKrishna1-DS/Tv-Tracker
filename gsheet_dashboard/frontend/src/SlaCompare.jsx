@@ -45,17 +45,20 @@ const STANDARD_PROD_STATUSES = [
 ];
 
 const comparisonCategories = ['Future SLA', 'Negative SLA', 'Today SLA'];
+const newOrdersTableColumns = [...NEW_ORDER_COLUMNS, 'SLA Status'];
 const cancelledStatus = value => /^cancelled$|^canceled$/i.test(String(value).trim());
 const cancelledMatrixPreference = 'tv-tracker-sla-compare-hide-cancelled';
 
 function comparisonSummaryStatus(order) {
   if (order.match_type === 'prod_only') return null;
+  if (order.match_type === 'sla_only') return order.sla_status || '(Blank)';
+  if (order.prod_status === 'Attorney Approval') return 'Attorney Approval';
   if (String(order.sla_status).trim().toLowerCase() === 'home builders') return 'Home Builders';
   return ['status_moved', 'same_status'].includes(order.match_type) ? order.prod_status || '(Blank)' : null;
 }
 
 function recomputeSlaComparison(orders) {
-  const summaryByStatus = {};
+  const summaryByStatus = Object.create(null);
   let matchedCount = 0;
   let movedCount = 0;
   let sameCount = 0;
@@ -402,6 +405,9 @@ export default function SlaCompare({state, reportMode}) {
   };
 
   const renderProdStatusCell = (order) => {
+    if (order.match_type === 'sla_only' && order.prod_status === 'Attorney Approval') {
+      return <span className="status-pill">Attorney Approval</span>;
+    }
     if (order.match_type === 'sla_only' && order.sla_status === 'Home Builders') {
       return <span className="status-pill">Home Builders</span>;
     }
@@ -689,7 +695,15 @@ export default function SlaCompare({state, reportMode}) {
 
   // 3. Attach Excel-style column filter controls
   const newOrderMode=filterType==='sla_only'&&!search.trim()&&!matrixFilter;
-  const columnFilterControls = useColumnFilters(tableRecords, newOrderMode?NEW_ORDER_COLUMNS:FILTER_COLUMNS);
+  const newOrdersRecords = useMemo(() => newOrderMode ? baseFilteredOrders.map(order => ({
+    ...newOrderRecord(order),
+    _raw: order,
+    'SLA Status': order.sla_category || 'Unknown SLA',
+  })) : [], [baseFilteredOrders, newOrderMode]);
+  const columnFilterControls = useColumnFilters(
+    newOrderMode ? newOrdersRecords : tableRecords,
+    newOrderMode ? newOrdersTableColumns : FILTER_COLUMNS,
+  );
   const activeColFilterCount = Object.keys(columnFilterControls.filters).length;
   async function copyNewOrders() {
     const rows = columnFilterControls.rows.map(record => record._raw).filter(order => order.match_type === 'sla_only');
@@ -713,14 +727,13 @@ export default function SlaCompare({state, reportMode}) {
       [category, summaryRows.reduce((sum, row) => sum + (row[category] || 0), 0)])
   ) : slaSummary.totals;
   const visibleComparisonCategories = [...comparisonCategories, ...(summaryTotals?.['Unknown SLA']?['Unknown SLA']:[])];
-
-  // Helper to open Pop Table modal for matrix cells (based on Production Report status)
   const openMatrixPop = (status, category) => {
     if (!data || !data.orders) return;
     // Include every counted SLA Status order, even when absent from production.
     const matched = data.orders.filter(o => {
       const status = comparisonSummaryStatus(o);
-      return status !== null && (!hideCancelled || !cancelledStatus(status));
+      return status !== null &&
+        (!hideCancelled || !cancelledStatus(status));
     });
     let subset = matched;
     if (status && status !== 'Grand Total') {
@@ -731,7 +744,7 @@ export default function SlaCompare({state, reportMode}) {
     }
     const labelParts = [];
     if (status && status !== 'Grand Total') labelParts.push(status);
-    else labelParts.push('All Production Statuses');
+    else labelParts.push('All Statuses');
 
     if (category && category !== 'Grand Total') labelParts.push(category);
     else labelParts.push('All SLA Categories');
@@ -964,7 +977,7 @@ export default function SlaCompare({state, reportMode}) {
           <div className="subheading-left">
             <TableProperties size={18} />
             <h3>SLA Status Summary Matrix</h3>
-            <span className="subheading-tag">Grouped by Production Status for the selected SLA Status preview.</span>
+            <span className="subheading-tag">Matched orders use Production Status. New orders use their status from the selected SLA Status preview.</span>
           </div>
           <div className="subheading-right inline">
             {hideCancelled&&<button type="button" className="secondary" onClick={()=>toggleCancelled(false)}>Show Cancelled</button>}
@@ -1004,7 +1017,7 @@ export default function SlaCompare({state, reportMode}) {
             <table className="sla-matrix-table" aria-label="SLA Status Summary Table">
               <thead>
                 <tr>
-                  <th scope="col" style={{width: 300}}><span className="sla-status-heading">Production Status {comparisonEditing.addStatusButton}</span></th>
+                  <th scope="col" style={{width: 300}}><span className="sla-status-heading">Status {comparisonEditing.addStatusButton}</span></th>
                   {[...visibleComparisonCategories, 'Grand Total'].map(category => (
                     <th key={category} scope="col" className="col-num">{category}</th>
                   ))}
@@ -1198,7 +1211,34 @@ export default function SlaCompare({state, reportMode}) {
       {/* Side-by-Side Dual Comparison Table with Excel Column Filters */}
       {newOrderMode?<>
         <p className="report-context">Production report format · 25 columns · Copy rows into column A. No is left blank for your worksheet numbering.</p>
-        <div className="table-scroll compare-table-wrap new-orders-report"><table className="side-by-side-table" aria-label="New Orders production report"><thead><tr>{NEW_ORDER_COLUMNS.map(column=><th key={column} scope="col"><div className="workspace-filter-heading"><span>{column}</span><ColumnFilterButton column={column} controls={columnFilterControls}/></div></th>)}</tr></thead><tbody>{columnFilterControls.rows.map(rec=><tr key={rec._raw.order_number}>{NEW_ORDER_COLUMNS.map(column=><td key={column} className={column==='Comments'?'eta-comment-cell':undefined}>{column==='SLA Expiration'?renderExpirationCell(rec._raw):String(newOrderRecord(rec._raw)[column])||'—'}</td>)}</tr>)}{!columnFilterControls.rows.length&&<tr><td colSpan={25} className="table-empty">No new orders match the current column filters.</td></tr>}</tbody></table></div>
+        <div className="table-scroll compare-table-wrap new-orders-report">
+          <table className="side-by-side-table" aria-label="New Orders production report">
+            <thead>
+              <tr>{newOrdersTableColumns.map(column => (
+                <th key={column} scope="col">
+                  <div className="workspace-filter-heading">
+                    <span>{column}</span>
+                    <ColumnFilterButton column={column} controls={columnFilterControls} />
+                  </div>
+                </th>
+              ))}</tr>
+            </thead>
+            <tbody>
+              {columnFilterControls.rows.map(record => (
+                <tr key={record._raw.order_number}>
+                  {newOrdersTableColumns.map(column => (
+                    <td key={column} className={column === 'Comments' ? 'eta-comment-cell' : undefined}>
+                      {column === 'SLA Expiration' ? renderExpirationCell(record._raw) : String(record[column] ?? '') || '—'}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+              {!columnFilterControls.rows.length && (
+                <tr><td colSpan={newOrdersTableColumns.length} className="table-empty">No new orders match the current column filters.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </>:<>
       <div className="table-scroll compare-table-wrap">
         <table className="side-by-side-table" aria-label="SLA vs Production Orders Comparison">

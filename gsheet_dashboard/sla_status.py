@@ -120,6 +120,9 @@ def completion_status(value):
 
 def sla_queue_rule(row, as_of=None):
     """The active SLA queue never inherits production completion evidence."""
+    product = queue_field(row, 'Product')
+    if special_product_status(product) == 'Attorney Approval':
+        return -1, 'Attorney Approval', f'Product is {product}'
     compact = lambda value: re.sub(r'[^a-z0-9]', '', str(value).casefold())
     active = {column: value for column, value in row.items()
               if compact(column) not in ('outtime', 'completedtime')}

@@ -23,7 +23,7 @@ class SlaCompareTests(unittest.TestCase):
         recalculate_summary(result)
         custom=next(row for row in result['sla_summary']['rows'] if row['Status']=='Manual review')
         self.assertEqual(custom['Grand Total'],0)
-        self.assertEqual(result['sla_summary']['totals']['Grand Total'],3)
+        self.assertEqual(result['sla_summary']['totals']['Grand Total'],4)
         book=load_workbook(export_comparison_excel(result,table_scope='sla_summary'))
         exported=next(row for row in book.active.iter_rows(min_row=5,values_only=True) if row[0]=='Manual review')
         self.assertEqual(exported[-1],0)
@@ -38,13 +38,13 @@ class SlaCompareTests(unittest.TestCase):
         sheet=book['Related Orders']
         rows=list(sheet.values)
         records=[dict(zip(rows[0],row)) for row in rows[1:]]
-        counts=Counter((row['Production Status'],row['SLA Category']) for row in records)
+        counts=Counter((row['Status'],row['SLA Category']) for row in records)
         self.assertEqual(len(records),result['sla_summary']['totals']['Grand Total'])
         for row in result['sla_summary']['rows']:
             for category in ('Future SLA','Negative SLA','Today SLA','Unknown SLA'):
                 self.assertEqual(counts[(row['Status'],category)],row.get(category,0))
         self.assertNotIn('PROD-ONLY',{row['Order Number'] for row in records})
-        self.assertNotIn('NEG-2',{row['Order Number'] for row in records})
+        self.assertIn(('NEG-2', 'Search In Progress'), {(row['Order Number'], row['Status']) for row in records})
         self.assertEqual(sheet.freeze_panes,'C2')
         self.assertTrue(sheet.auto_filter.ref)
         book.close()
@@ -68,8 +68,8 @@ class SlaCompareTests(unittest.TestCase):
         expected = {row['Order Number'] for row in self.report['rows'] if row['SLA Category'] == 'Negative SLA'}
         actual = {row['order_number'] for row in result['orders'] if row['sla_category'] == 'Negative SLA'}
         self.assertEqual(actual, expected)
-        self.assertEqual(result['sla_summary']['totals']['Negative SLA'], 1)
-        self.assertEqual(result['sla_summary']['totals']['Grand Total'], 3)
+        self.assertEqual(result['sla_summary']['totals']['Negative SLA'], 2)
+        self.assertEqual(result['sla_summary']['totals']['Grand Total'], 4)
         self.assertEqual(result['sla_summary']['totals']['Not in SLA Queue'], 0)
         self.assertNotIn('Not in Production Report', {row['Status'] for row in result['sla_summary']['rows']})
         self.assertNotIn('EXCLUDED', {row['order_number'] for row in result['orders']})
@@ -126,7 +126,7 @@ class SlaCompareTests(unittest.TestCase):
         self.assertEqual(typing['Not in SLA Queue'], 0)
         book = load_workbook(export_comparison_excel(result, table_scope='sla_summary'))
         headers = [cell.value for cell in book.active[4]]
-        self.assertEqual(headers, ['Production Status', 'Future SLA', 'Negative SLA', 'Today SLA', 'Grand Total'])
+        self.assertEqual(headers, ['Status', 'Future SLA', 'Negative SLA', 'Today SLA', 'Grand Total'])
         rows = list(book.active.iter_rows(min_row=5, values_only=True))
         exported = dict(zip(headers, next(row for row in rows if row[0] == 'Typing in Progress')))
         self.assertEqual(exported['Grand Total'], 1)
@@ -145,7 +145,7 @@ class SlaCompareTests(unittest.TestCase):
         self.assertEqual({row[0] for row in rows}, {'NEG-1', 'NEG-2'})
         self.assertEqual({row[6] for row in rows}, {'-2d', '-1h'})
 
-    def test_home_builders_from_sla_status_are_included_once_without_other_missing_orders(self):
+    def test_home_builders_from_sla_status_are_included_once(self):
         self.report['rows'][1]['Status'] = 'Home Builders'
         result = compare_sla_with_production(self.report, self.production)
         homes = next(row for row in result['sla_summary']['rows'] if row['Status'] == 'Home Builders')
@@ -163,6 +163,29 @@ class SlaCompareTests(unittest.TestCase):
         self.assertEqual(result['sla_summary']['totals']['Grand Total'], 4)
         self.assertEqual(next(row for row in result['sla_summary']['rows'] if row['Status'] == 'Home Builders')['Grand Total'], 1)
 
+    def test_attorney_approval_has_separate_production_status_in_summary_and_export(self):
+        self.report['rows'][0].update(Product='Attorney Appro..', Status='Attorney Approval')
+        self.report['rows'][1].update(Product='Attorney Approval', Status='Attorney Approval')
+        self.production[1]['product'] = 'Attorney Approval'
+        self.production[3]['product'] = 'Attorney Approach'
+
+        result = compare_sla_with_production(self.report, self.production)
+        orders = {row['order_number']: row for row in result['orders']}
+        for number in ('NEG-1', 'NEG-2', 'TODAY', 'PROD-ONLY'):
+            self.assertEqual(orders[number]['prod_status'], 'Attorney Approval')
+        self.assertEqual(orders['NEG-1']['imported_prod_status'], 'QC in Progress')
+        self.assertEqual(orders['NEG-1']['match_type'], 'same_status')
+        self.assertEqual(orders['NEG-2']['match_type'], 'sla_only')
+        self.assertEqual(orders['FUTURE']['prod_status'], 'QC in Progress')
+        summary = next(row for row in result['sla_summary']['rows'] if row['Status'] == 'Attorney Approval')
+        self.assertEqual((summary['Negative SLA'], summary['Today SLA'], summary['Grand Total']), (2, 1, 3))
+
+        book = load_workbook(export_comparison_excel(result, table_scope='orders',
+                             filter_type='summary', summary_status='Attorney Approval'))
+        self.addCleanup(book.close)
+        self.assertEqual({row[0] for row in book.active.iter_rows(min_row=5, values_only=True)},
+                         {'NEG-1', 'NEG-2', 'TODAY'})
+
     def test_duplicate_status_matches_the_queue_product_instead_of_last_workbook(self):
         self.report['rows'][0]['Product'] = 'Update Full Ti..'
         rows = [{'order_number': 'NEG-1', 'product': product, 'status': status, 'source_sheet': source}
@@ -177,7 +200,7 @@ class SlaCompareTests(unittest.TestCase):
     def test_status_edits_keep_negative_membership_and_unmatched_orders(self):
         result = compare_sla_with_production(self.report, self.production)
         update_order_production_status(result, 'NEG-1', 'Completed and Delivered')
-        self.assertEqual(result['sla_summary']['totals']['Negative SLA'], 1)
+        self.assertEqual(result['sla_summary']['totals']['Negative SLA'], 2)
         self.assertEqual({o['order_number'] for o in result['orders'] if o['sla_category'] == 'Negative SLA'}, {'NEG-1', 'NEG-2'})
 
     def test_blank_status_is_not_reported_as_a_status_movement(self):
@@ -191,7 +214,7 @@ class SlaCompareTests(unittest.TestCase):
         self.report['rows'][1]['Order Number'] = 'NEG1'
         result = compare_sla_with_production(self.report, self.production)
         self.assertEqual(result['metrics']['total_sla'], 4)
-        self.assertEqual(result['sla_summary']['totals']['Negative SLA'], 1)
+        self.assertEqual(result['sla_summary']['totals']['Negative SLA'], 2)
 
     def test_excel_and_csv_ignore_expiration_and_eta_columns(self):
         book = Workbook()
@@ -205,7 +228,7 @@ class SlaCompareTests(unittest.TestCase):
                 parsed = read_production_file(content, filename=name)
                 self.assertEqual(parsed[0]['prod_sla'], '')
                 result = compare_sla_with_production(self.report, parsed)
-                self.assertEqual(result['sla_summary']['totals']['Negative SLA'], 1)
+                self.assertEqual(result['sla_summary']['totals']['Negative SLA'], 2)
 
     def test_api_uses_the_same_selected_preview_as_sla_status(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -233,6 +256,7 @@ class SlaCompareTests(unittest.TestCase):
             refreshed = client.get('/api/sla-compare').json
             self.assertEqual(refreshed['source_files'], 'production.csv')
             self.assertEqual(refreshed['orders'], comparison['orders'])
+            self.assertEqual(refreshed['sla_summary'], comparison['sla_summary'])
             restarted = Flask('restarted')
             register_report_routes(restarted, workspace, threading.Lock(), Mock(return_value={}),
                                    Mock(side_effect=RuntimeError('offline')), lambda: None)
@@ -241,7 +265,7 @@ class SlaCompareTests(unittest.TestCase):
             self.assertEqual(restored['orders'], comparison['orders'])
             self.assertNotIn('sla_comparison_report', workspace.public())
             self.assertEqual(comparison['selected_preview_id'], status['preview_id'])
-            self.assertEqual(comparison['sla_summary']['totals']['Negative SLA'], 1)
+            self.assertEqual(comparison['sla_summary']['totals']['Grand Total'], len(status['rows']))
             self.assertEqual({o['order_number'] for o in comparison['orders'] if o['sla_category'] == 'Negative SLA'},
                              {o['Order Number'] for o in status['rows'] if o['SLA Category'] == 'Negative SLA'})
             switched = client.get('/api/sla-compare?preview_id=2').json

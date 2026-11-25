@@ -35,7 +35,7 @@ export default function useComparisonEditing({previewId, orders, summaryStatus, 
   }
   function editStatus(status) {
     setName(status || ''); setError('');
-    setStatusEditor({status, orders: orders.filter(order => summaryStatus(order) === status)});
+    setStatusEditor({status, orders: orders.filter(order => order.match_type !== 'sla_only' && summaryStatus(order) === status)});
   }
   async function refresh() {
     setReport(await api(reportUrl));
@@ -50,7 +50,6 @@ export default function useComparisonEditing({previewId, orders, summaryStatus, 
         await api('/api/sla-statuses', {method: 'POST', headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({preview_id: Number(previewId), status: name.trim(), ...(statusEditor.status ? {previous: statusEditor.status} : {})})});
       } else {
-        // These rows are grouped by production status, not by their queue status.
         for (const order of statusEditor.orders) {
           await api('/api/sla-compare/update-status', {method: 'POST', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({order_number: order.order_number, prod_status: name.trim()})});
@@ -64,10 +63,12 @@ export default function useComparisonEditing({previewId, orders, summaryStatus, 
     } finally { setSaving(false); }
   }
   function statusActions(status, onRemove) {
+    const group = orders.filter(order => summaryStatus(order) === status);
+    const canEdit = !group.length || group.some(order => order.match_type !== 'sla_only');
     return <span className="inline compare-status-actions">
       <button type="button" className="icon-button" aria-label={`Add order to status ${status}`} title="Add SLA order" disabled={!ready || saving} onClick={() => addOrder(status)}><Plus size={15}/></button>
       {onRemove&&<button type="button" className="icon-button" aria-label="Remove Cancelled from summary" title="Remove Cancelled from summary" onClick={onRemove}><Trash2 size={15}/></button>}
-      <button type="button" className="icon-button" aria-label={`Edit status ${status}`} title="Edit comparison status name" disabled={!ready || saving} onClick={() => editStatus(status)}><Pencil size={15}/></button>
+      <button type="button" className="icon-button" aria-label={`Edit status ${status}`} title={canEdit ? 'Edit comparison status name' : 'Edit the order details to change its SLA queue status'} disabled={!ready || saving || !canEdit} onClick={() => editStatus(status)}><Pencil size={15}/></button>
     </span>;
   }
   function rowActions(order) {

@@ -393,6 +393,31 @@ class SlaQueueRulesTests(unittest.TestCase):
             with self.subTest(product=unrelated):
                 self.assertEqual(special_product_status(unrelated), '')
 
+    def test_attorney_approval_product_stays_in_sla_group_across_queue_changes(self):
+        self.capture(1, [{'Order Number': 'approval', 'Product': 'Attorney Approval',
+                          'Task Status': 'Available', 'Status': 'Search In Progress'}])
+        self.capture(2, [
+            {'Order Number': 'approval', 'Product': 'Attorney Appro..',
+             'Task Status': 'Workflow Suspended', 'ETA Comments': 'ON HOLD',
+             'SLA Expiration Overdue': 'true'},
+            {'Order Number': 'duplicate', 'Product': 'Full Title', 'Task Name': 'CRSP2'},
+            {'Order Number': 'duplicate', 'Product': 'Attorney Appro\u2026', 'Task Name': 'TypingModule'},
+            {'Order Number': 'other', 'Product': 'Full Title', 'ETA Comments': 'ON HOLD'},
+        ])
+
+        earlier = self.client.get('/api/sla-status?preview_id=1').json
+        self.assertEqual(earlier['rows'][0]['Status'], 'Attorney Approval')
+        latest = self.client.get('/api/sla-status?preview_id=2').json
+        rows = {row['Order Number']: row for row in latest['rows']}
+        self.assertEqual({number: row['Status'] for number, row in rows.items()}, {
+            'approval': 'Attorney Approval', 'duplicate': 'Attorney Approval',
+            'other': 'Waiting for Effective Date',
+        })
+        self.assertEqual(rows['duplicate']['Product'], 'Attorney Appro\u2026')
+        self.assertEqual(rows['approval']['SLA Category'], 'Negative SLA')
+        totals = next(row for row in latest['summary'] if row['Status'] == 'Attorney Approval')
+        self.assertEqual(totals['Grand Total'], 2)
+
     def test_manual_edit_overrides_queue_rules_and_only_changes_selected_order(self):
         self.capture(1, [{'Order Number': number, 'Task Name': 'CRSP2', 'SLA Expiration*': '2h'}
                          for number in ('001', '002')])
