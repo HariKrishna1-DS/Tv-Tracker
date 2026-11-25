@@ -118,12 +118,13 @@ test('Negative SLA popup retains the SLA Status order set after production statu
     if (name === '/api/sla-compare') body = {
       has_production: true, orders, preview_name: 'preview1', selected_preview_id: 1,
       previews: [{id: 1, name: 'preview1', row_count: 3, created: '2026-10-14T12:00:00Z'}],
-      source_files: 'production.xlsx', metrics: {total_sla: 3, total_production: 3, matched: 2, status_moved: 1, same_status: 1, sla_only: 1, prod_only: 1},
+      source_files: 'production.xlsx', metrics: {total_sla: 5, total_production: 4, matched: 3, status_moved: 1, same_status: 2, sla_only: 2, prod_only: 1},
       transitions: [], sla_summary: {
         rows: [{Status: 'QC in Progress', 'Negative SLA': 1, 'Today SLA': 1, 'Grand Total': 2},
+          {Status: 'Search In Progress', 'Negative SLA': 1, 'Grand Total': 1},
           {Status: 'Home Builders', 'Future SLA': 1, 'Grand Total': 1},
           {Status: 'Cancelled', 'Unknown SLA': 1, 'Grand Total': 1}],
-        totals: {'Negative SLA': 1, 'Today SLA': 1, 'Future SLA': 1, 'Unknown SLA': 1, 'Grand Total': 4},
+        totals: {'Negative SLA': 2, 'Today SLA': 1, 'Future SLA': 1, 'Unknown SLA': 1, 'Grand Total': 5},
       },
     };
     if (name === '/api/sla-compare/update-status') body = {ok: true};
@@ -138,14 +139,14 @@ test('Negative SLA popup retains the SLA Status order set after production statu
   expect(await removeCancelled.evaluate(button=>button.previousElementSibling?.getAttribute('aria-label'))).toBe('Add order to status Cancelled');
   await removeCancelled.click();
   await expect(matrix.getByRole('rowheader', {name:/Cancelled/})).toHaveCount(0);
-  await expect(matrix.locator('.matrix-total-row td').last()).toHaveText('3');
+  await expect(matrix.locator('.matrix-total-row td').last()).toHaveText('4');
   await expect(page.getByRole('link', {name:'Download Summary (Excel)'})).toHaveAttribute('href', /exclude_cancelled=1/);
   const negative = page.getByTitle('Click to open Pop Table for all Negative SLA orders', {exact: true});
-  await expect(negative).toHaveText('1');
+  await expect(negative).toHaveText('2');
   await negative.click();
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByRole('cell', {name: 'NEG-1', exact: true})).toBeVisible();
-  await expect(dialog.getByRole('cell', {name: 'NEG-2', exact: true})).toHaveCount(0);
+  await expect(dialog.getByRole('cell', {name: 'NEG-2', exact: true})).toBeVisible();
   await expect(dialog.getByRole('cell', {name: 'TODAY', exact: true})).toHaveCount(0);
   await expect(dialog.getByRole('cell', {name: 'PROD-ONLY', exact: true})).toHaveCount(0);
   await expect(dialog.getByRole('link', {name: 'Download (Excel)', exact: true})).toHaveAttribute('href', /category=Negative%20SLA/);
@@ -155,12 +156,12 @@ test('Negative SLA popup retains the SLA Status order set after production statu
   await mainTable.getByRole('button', {name: 'Edit Production Status for NEG-1'}).click();
   await mainTable.locator('select.status-edit-select').selectOption('Completed and Delivered');
   await mainTable.getByRole('button', {name: 'Save Status', exact: true}).click();
-  await expect(negative).toHaveText('1');
+  await expect(negative).toHaveText('2');
   await negative.click();
   await expect(dialog.getByRole('cell', {name: 'NEG-1', exact: true})).toBeVisible();
-  await expect(dialog.getByRole('cell', {name: 'NEG-2', exact: true})).toHaveCount(0);
+  await expect(dialog.getByRole('cell', {name: 'NEG-2', exact: true})).toBeVisible();
   await dialog.getByRole('button', {name: 'View in Main Table', exact: true}).click();
-  await expect(mainTable.locator('tbody tr')).toHaveCount(1);
+  await expect(mainTable.locator('tbody tr')).toHaveCount(2);
   await expect(page.getByRole('link', {name: 'Download Filtered Orders (Excel)', exact: true})).toHaveAttribute('href', /filter_type=summary/);
   await page.keyboard.press('Escape');
   await expect(page.getByRole('columnheader', {name: 'Not in SLA Queue', exact: true})).toHaveCount(0);
